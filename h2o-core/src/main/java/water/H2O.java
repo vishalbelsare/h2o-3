@@ -30,6 +30,8 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.net.*;
+import java.nio.file.FileSystems;
+import java.nio.file.PathMatcher;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -44,6 +46,18 @@ import java.util.concurrent.atomic.AtomicLong;
 final public class H2O {
   public static final String DEFAULT_JKS_PASS = "h2oh2o";
   public static final int H2O_DEFAULT_PORT = 54321;
+  public static final Map<Integer, Integer> GITHUB_DISCUSSIONS = createMap();
+  
+  static Map<Integer, Integer> createMap() {
+    Integer[] GHDiscussion = new Integer[]{15512, 15513, 15514, 15515, 15516, 15517, 15518, 15519, 15520, 15521, 15522,
+            15523, 15524, 15525};
+    Integer[] techNoteNumber = new Integer[]{1,2,3,4,5,7,9,10,11,12,13,14,15,16};
+    Map<Integer, Integer> mapTNToGH = new HashMap<>();
+    int mapLen = GHDiscussion.length;
+    for (int index=0; index<mapLen; index++)
+      mapTNToGH.put(techNoteNumber[index], GHDiscussion[index]);
+    return mapTNToGH;
+  }
   
   //-------------------------------------------------------------------------------------------------------------------
   // Command-line argument parsing and help
@@ -272,7 +286,7 @@ final public class H2O {
     /** -allow_insecure_xgboost is a boolean that allows xgboost to run in a secured cluster */
     public boolean allow_insecure_xgboost = false;
 
-    /** -use_external_xgboost; invoke XGBoost on external cluster stared by Steam */
+    /** -use_external_xgboost; invoke XGBoost on external cluster started by Steam */
     public boolean use_external_xgboost = false;
 
     /** -decrypt_tool specifies the DKV key where a default decrypt tool will be installed*/
@@ -311,6 +325,9 @@ final public class H2O {
     public String context_path = "";
 
     public KeyValueArg[] extra_headers = new KeyValueArg[0];
+
+    public PathMatcher file_deny_glob = FileSystems.getDefault().getPathMatcher("glob:{/bin/*,/etc/*,/var/*,/usr/*,/proc/*,**/.**}");
+
   }
 
   public static class KeyValueArg {
@@ -412,6 +429,9 @@ final public class H2O {
     /** --ga_hadoop_ver=ga_hadoop_ver; Version string for Hadoop */
     public String ga_hadoop_ver = null;
 
+    /** -Hkey=value; additional configuration to merge into the Hadoop Configuration */
+    public final Properties hadoop_properties = new Properties();
+
     //-----------------------------------------------------------------------------------
     // Recovery
     //-----------------------------------------------------------------------------------
@@ -490,6 +510,15 @@ final public class H2O {
     System.out.println("");
     printHelp();
     H2O.exitQuietly(1); // argument parsing failed -> we might have inconsistent ARGS and not be able to initialize logging 
+  }
+
+  /**
+   * Use when given arguments are incompatible for cluster to run.
+   * Log is flushed into stdout to show important debugging information
+   */
+  public static void clusterInitializationFailed() {
+    Log.flushBufferedMessagesToStdout();
+    H2O.exitQuietly(1);
   }
 
   public static class OptString {
@@ -667,6 +696,13 @@ final public class H2O {
       else if (s.matches("hdfs_skip")) {
         trgt.hdfs_skip = true;
       }
+      else if (s.matches("H")) {
+        i = s.incrementAndCheck(i, args);
+        String key = args[i];
+        i = s.incrementAndCheck(i, args);
+        String value = args[i];
+        trgt.hadoop_properties.setProperty(key, value);
+      }
       else if (s.matches("aws_credentials")) {
         i = s.incrementAndCheck(i, args);
         trgt.aws_credentials = args[i];
@@ -812,7 +848,17 @@ final public class H2O {
         i = s.incrementAndCheck(i, args);
         String value = args[i];
         trgt.extra_headers = ArrayUtils.append(trgt.extra_headers, new KeyValueArg(key, value));
-      } else if(s.matches("embedded")) {
+      } else if (s.matches("file_deny_glob")) {
+        i = s.incrementAndCheck(i, args);
+        String key = args[i];
+        try {
+          trgt.file_deny_glob = FileSystems.getDefault().getPathMatcher("glob:" + key);
+        }
+        catch (Exception e) {
+          throw new IllegalArgumentException("Error parsing file_deny_glob parameter");
+        }
+      }
+      else if(s.matches("embedded")) {
         trgt.embedded = true;
       } else {
         parseFailed("Unknown argument (" + s + ")");
@@ -1141,7 +1187,7 @@ final public class H2O {
 
   //-------------------------------------------------------------------------------------------------------------------
 
-  private static AtomicLong nextModelNum = new AtomicLong(0);
+  private static final AtomicLong nextModelNum = new AtomicLong(0);
   
   /**
    * Calculate a unique model id that includes User-Agent info (if it can be discovered).
@@ -1201,7 +1247,7 @@ final public class H2O {
     // I actually tried only doing the addAndGet only for POST requests (and junk UUID otherwise),
     // but that didn't eliminate the gaps.
     long n = sequenceSource.addAndGet(1);
-    sb.append(Long.toString(CLUSTER_ID)).append("_").append(Long.toString(n));
+    sb.append(CLUSTER_ID).append("_").append(n);
 
     return sb.toString();
   }
@@ -1394,7 +1440,7 @@ final public class H2O {
   public static String technote(int number, String message) {
     return message + "\n\n" +
         "For more information visit:\n" +
-        "  http://jira.h2o.ai/browse/TN-" + Integer.toString(number);
+        "  https://github.com/h2oai/h2o-3/discussions/" + GITHUB_DISCUSSIONS.get(number);
   }
 
   /**
@@ -1412,7 +1458,7 @@ final public class H2O {
             .append("For more information visit:\n");
 
     for (int number : numbers) {
-      sb.append("  http://jira.h2o.ai/browse/TN-").append(Integer.toString(number)).append("\n");
+      sb.append("  https://github.com/h2oai/h2o-3/discussions/").append(GITHUB_DISCUSSIONS.get(number)).append("\n");
     }
 
     return sb.toString();
@@ -1834,7 +1880,7 @@ final public class H2O {
     Log.info("Built on: '" + ABV.compiledOn() + "'");
 
     if (ABV.isTooOld()) {
-      Log.warn("\n*** Your H2O version is too old! Please download the latest version from http://h2o.ai/download/ ***");
+      Log.warn("\n*** Your H2O version is over 100 days old. Please download the latest version from: https://h2o-release.s3.amazonaws.com/h2o/latest_stable.html ***");
       Log.warn("");
     }
 
@@ -1994,10 +2040,15 @@ final public class H2O {
 
   // Construct a new H2O Cloud from the member list
   H2O( H2ONode[] h2os, int hash, int idx ) {
-    _memary = h2os;             // Need to clone?
-    java.util.Arrays.sort(_memary);       // ... sorted!
-    _hash = hash;               // And record hash for cloud rollover
-    _idx = (char)(idx&0x0ff);   // Roll-over at 256
+    this(h2os, false, hash, idx);
+  }
+
+  H2O( H2ONode[] h2os, boolean presorted, int hash, int idx ) {
+    _memary = h2os;
+    if (!presorted)
+      java.util.Arrays.sort(_memary); // ... sorted!
+    _hash = hash;                     // And record hash for cloud rollover
+    _idx = (char)(idx&0x0ff);         // Roll-over at 256
   }
 
   // One-shot atomic setting of the next Cloud, with an empty K/V store.
@@ -2027,6 +2078,7 @@ final public class H2O {
   }
 
   public final int size() { return _memary.length; }
+  public boolean isSingleNode() { return size() == 1; }
   public final H2ONode leader() {
     return _memary[0];
   }
@@ -2358,6 +2410,11 @@ final public class H2O {
 
     // Validate arguments
     validateArguments();
+    
+    // Raise user warnings
+    if (H2O.ARGS.web_ip == null) {
+      Log.warn("SECURITY_WARNING: web_ip is not specified. H2O Rest API is listening on all available interfaces.");
+    }
 
     Log.info("X-h2o-cluster-id: " + H2O.CLUSTER_ID);
     Log.info("User name: '" + H2O.ARGS.user_name + "'");

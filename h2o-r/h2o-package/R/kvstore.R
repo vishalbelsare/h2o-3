@@ -86,7 +86,10 @@ h2o.removeAll <- function(timeout_secs=0, retained_elements = c()) {
     parms <- list()
     parms$retained_keys <- paste0("[", paste(retained_keys, collapse=','), "]")
     
-    invisible(.h2o.__remoteSend(.h2o.__DKV, method = "DELETE", timeout=timeout_secs, .params = parms))},
+    .h2o.__remoteSend(.h2o.__DKV, method = "DELETE", timeout=timeout_secs, .params = parms)
+    # remove all will also destroy all sessions, explicitly start a new one with a new ID
+    invisible(.attach.new.session(h2o.getConnection()))
+    },
     error = function(e) {
       print("Timeout on DELETE /DKV from R")
       print("Attempt thread dump...")
@@ -255,13 +258,21 @@ h2o.getModel <- function(model_id) {
       type    <- mapping$type
       scalar  <- mapping$scalar
 
-      if(type == "numeric" && class(value) == "list" && length(value) == 0) #Special case when using deep learning with 0 hidden units
+      if (type == "numeric" && inherits(value, "list") && length(value) == 0) #Special case when using deep learning with 0 hidden units
         value <- 0
-      else if (type == "numeric" && value == "Infinity")
-        value <- Inf
-      else if (type == "numeric" && value == "-Infinity")
-        value <- -Inf
+      else if (type == "numeric") {
+        value[value == "Infinity"] <- Inf
+        value[value == "-Infinity"] <- -Inf
 
+        # if there is no loss of information for integers, convert to numeric
+        num_value <- as.numeric(value)
+        if (is.character(value) && all(
+          grepl(".", value, fixed = TRUE) | # Not an integer
+          !is.finite(num_value) | # Or not a finite number (NaN/Inf)
+          (-2^.Machine$double.digits <= num_value & # Or lies between the min and max fully representable number
+            num_value <= 2^.Machine$double.digits)))
+          value <- num_value
+      }
       # Parse frame information to a key
       if (type == "H2OFrame")
         value <- value$name
@@ -326,25 +337,36 @@ h2o.getModel <- function(model_id) {
   allparams$response_column <- NULL
   parameters$ignored_columns <- NULL
   parameters$response_column <- NULL
-  if (identical("glm", json$algo) && allparams$HGLM) {
-    .newH2OModel(Class         = Class,
-                 model_id      = model_id,
-                 algorithm     = json$algo,
-                 parameters    = parameters,
-                 allparameters = allparams,
-                 have_pojo     = FALSE,
-                 have_mojo     = FALSE,
-                 model         = model)
-  } else {
+
+
+  params_to_select <- list(
+    model_id = "name",
+    response_column = "column_name",
+    training_frame = "name",
+    validation_frame = "name"
+  )
+  params <- list(actual=list(), default=list(), input=list())
+  for (p in json$parameters) {
+    if (p$name %in% names(params_to_select)) {
+      params[["actual"]][[p$name]] <- p[["actual_value"]][[params_to_select[[p$name]]]]
+      params[["default"]][[p$name]] <- p[["default_value"]][[params_to_select[[p$name]]]]
+      params[["input"]][[p$name]] <- p[["input_value"]][[params_to_select[[p$name]]]]
+    } else {
+      params[["actual"]][[p$name]] <- p[["actual_value"]]
+      params[["default"]][[p$name]] <- p[["default_value"]]
+      params[["input"]][[p$name]] <- p[["input_value"]]
+    }
+  }
+
   .newH2OModel(Class         = Class,
                model_id      = model_id,
                algorithm     = json$algo,
                parameters    = parameters,
                allparameters = allparams,
+               params        = params,
                have_pojo     = json$have_pojo,
                have_mojo     = json$have_mojo,
                model         = model)
-  }
 }
 
 #' Retrieves an instance of \linkS4class{H2OSegmentModels} for a given id.
@@ -409,17 +431,18 @@ as.data.frame.H2OSegmentModels <- function(x, ...) {
 #' fr <- as.h2o(iris)
 #' my_model <- h2o.gbm(x = 1:4, y = 5, training_frame = fr)
 #'
-#' h2o.download_pojo(my_model)  # print the model to screen
+#' # POJO download requires H2O-3 Enterprise and is blocked in H2O-3 OSS.
+#' try(h2o.download_pojo(my_model))  # print the model to screen
 #' # h2o.download_pojo(my_model, getwd())  # save the POJO and jar file to the current working
 #' #                                         directory, NOT RUN
 #' # h2o.download_pojo(my_model, getwd(), get_jar = FALSE )  # save only the POJO to the current
 #' #                                                           working directory, NOT RUN
-#' h2o.download_pojo(my_model, getwd())  # save to the current working directory
+#' try(h2o.download_pojo(my_model, getwd()))  # save to the current working directory
 #' }
 #' @export
 h2o.download_pojo <- function(model, path=NULL, getjar=NULL, get_jar=TRUE, jar_name="") {
-  
-  if (class(model) == "H2OAutoML") {
+  .h2o.enterprise.block("POJO download")
+  if (inherits(model, "H2OAutoML")) {
     model <- model@leader
   }
   
@@ -494,12 +517,14 @@ h2o.download_pojo <- function(model, path=NULL, getjar=NULL, get_jar=TRUE, jar_n
 #' h <- h2o.init()
 #' fr <- as.h2o(iris)
 #' my_model <- h2o.gbm(x = 1:4, y = 5, training_frame = fr)
-#' h2o.download_mojo(my_model)  # save to the current working directory
+#' # MOJO export requires H2O-3 Enterprise and is blocked in H2O-3 OSS.
+#' try(h2o.download_mojo(my_model))  # save to the current working directory
 #' }
 #' @export
 h2o.download_mojo <- function(model, path=getwd(), get_genmodel_jar=FALSE, genmodel_name="", genmodel_path="", filename="") {
-  
-  if (class(model) == "H2OAutoML") {
+  .h2o.enterprise.block("MOJO export")
+
+  if (inherits(model, "H2OAutoML")) {
     model <- model@leader
   }
 

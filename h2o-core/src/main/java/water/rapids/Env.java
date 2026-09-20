@@ -1,6 +1,5 @@
 package water.rapids;
 
-import hex.Model;
 import hex.ObjectConsistencyChecker;
 import water.*;
 import water.fvec.Frame;
@@ -22,6 +21,7 @@ import water.rapids.ast.prims.reducers.*;
 import water.rapids.ast.prims.repeaters.*;
 import water.rapids.ast.prims.search.*;
 import water.rapids.ast.prims.string.*;
+import water.rapids.ast.prims.testing.AstSetReadForbidden;
 import water.rapids.ast.prims.time.*;
 import water.rapids.ast.prims.timeseries.*;
 import water.rapids.vals.ValFrame;
@@ -258,6 +258,7 @@ public class Env extends Iced {
     init(new AstNrow());
     init(new AstRBind());
     init(new AstReLevel());
+    init(new AstRelevelByFreq());
     init(new AstRename());
     init(new AstRowSlice());
     init(new AstScale());
@@ -266,7 +267,6 @@ public class Env extends Iced {
     init(new AstSetLevel());
     init(new AstPivot());
     init(new AstRankWithinGroupBy()); // provide ranking withing groupby groups sorted after certain columns
-//    init(new AstTargetEncoderFit()); // we register it with services approach
 
     // Assignment; all of these lean heavily on Copy-On-Write optimizations.
     init(new AstAppend());      // Add a column
@@ -303,6 +303,9 @@ public class Env extends Iced {
     init(new AstSetProperty());
     init(new AstPerfectAUC());
 
+    // Test Support
+    init(new AstSetReadForbidden());
+    
     // Search
     init(new AstMatch());
     init(new AstWhich());
@@ -317,11 +320,15 @@ public class Env extends Iced {
     // Segment Models
     init(new AstSegmentModelsAsFrame());
     
-    // Reset model threshold
+    // Models
     init(new AstModelResetThreshold());
-
-    // Permutation Variable Importance
+    init(new AstTestJavaScoring());
     init(new AstPermutationVarImp());
+
+    init(new AstFairnessMetrics());
+
+    // Make Leaderboard
+    init(new AstMakeLeaderboard());
 
     // Filters
     init(new AstDropDuplicates());
@@ -331,6 +338,9 @@ public class Env extends Iced {
     
     // generate result frame
     init(new AstResultFrame());
+
+    // generate transform frame
+    init(new AstTransformFrame());
 
     // Custom (eg. algo-specific)
     for (AstPrimitive prim : PrimsService.INSTANCE.getAllPrims())

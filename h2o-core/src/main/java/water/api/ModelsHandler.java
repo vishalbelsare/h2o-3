@@ -135,6 +135,7 @@ public class ModelsHandler<I extends ModelsHandler.Models, S extends SchemaV3<I,
   }
 
   public StreamingSchema fetchJavaCode(int version, ModelsV3 s) {
+    water.EnterpriseGate.block("POJO download");
     final Model model = getFromDKV("key", s.model_id.key());
     if (!model.havePojo()) {
       throw H2O.unimpl(String.format("%s does not support export to POJO", model._parms.fullName()));
@@ -146,6 +147,7 @@ public class ModelsHandler<I extends ModelsHandler.Models, S extends SchemaV3<I,
 
   @SuppressWarnings("unused") // called from the RequestServer through reflection
   public StreamingSchema fetchMojo(int version, ModelsV3 s) {
+    water.EnterpriseGate.block("MOJO export");
     Model model = getFromDKV("key", s.model_id.key());
     if (!model.haveMojo()) {
       throw H2O.unimpl(String.format("%s does not support export to MOJO", model._parms.fullName()));
@@ -179,7 +181,9 @@ public class ModelsHandler<I extends ModelsHandler.Models, S extends SchemaV3<I,
     Model model = getFromDKV("key", s.model_id.key());
     if (model instanceof FeatureInteractionsCollector) {
       TwoDimTable[][] featureInteractions = ((FeatureInteractionsCollector) model).getFeatureInteractionsTable(s.max_interaction_depth, s.max_tree_depth, s.max_deepening);
-  
+      if(featureInteractions == null){
+        return s;
+      }
       s.feature_interaction = new TwoDimTableV3[featureInteractions[0].length + featureInteractions[2].length + 1];
       
       for (int i = 0; i < featureInteractions[0].length; i++) {
@@ -189,7 +193,6 @@ public class ModelsHandler<I extends ModelsHandler.Models, S extends SchemaV3<I,
       for (int i = 0; i < featureInteractions[2].length; i++) {
         s.feature_interaction[i + featureInteractions[0].length + 1] = new TwoDimTableV3().fillFromImpl(featureInteractions[2][i]);
       }
-      
       return s;
     } else {
       throw H2O.unimpl(String.format("%s does not support feature interactions calculation", model._parms.fullName()));
@@ -203,10 +206,21 @@ public class ModelsHandler<I extends ModelsHandler.Models, S extends SchemaV3<I,
       s.h  = ((FriedmanPopescusHCollector) model).getFriedmanPopescusH(s.frame._fr, s.variables);
       return s;
     } else {
-      throw H2O.unimpl(String.format("%s does not support feature interactions calculation", model._parms.fullName()));
+      throw H2O.unimpl(String.format("%s does not support Friedman Popescus H calculation", model._parms.fullName()));
     }
   }
 
+  @SuppressWarnings("unused")
+  public SignificantRulesV3 makeSignificantRulesTable(int version, SignificantRulesV3 s) {
+    Model model = getFromDKV("key", s.model_id.key());
+    if (model instanceof SignificantRulesCollector) {
+      s.significant_rules_table  = new TwoDimTableV3(((SignificantRulesCollector) model).getRuleImportanceTable());
+      return s;
+    } else {
+      throw H2O.unimpl(String.format("%s does not support significant rules collection", model._parms.fullName()));
+    }
+  }
+  
   @SuppressWarnings("unused") // called from the RequestServer through reflection
   public PartialDependenceV3 fetchPartialDependence(int version, KeyV3.PartialDependenceKeyV3 s) {
     PartialDependence partialDependence = DKV.getGet(s.key());
@@ -283,6 +297,7 @@ public class ModelsHandler<I extends ModelsHandler.Models, S extends SchemaV3<I,
 
   @SuppressWarnings("unused") // called through reflection by RequestServer
   public ModelExportV3 exportMojo(int version, ModelExportV3 mexport) {
+    water.EnterpriseGate.block("MOJO export");
     Model model = getFromDKV("model_id", mexport.model_id.key());
     try {
       URI targetUri = model.exportMojo(mexport.dir, mexport.force); // mexport.dir: Really file, not dir

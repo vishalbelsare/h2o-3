@@ -56,18 +56,20 @@ public class VecParquetReader implements Closeable {
   private final byte[] chunkSchema; // contains column types of all columns, not just the skipped one
 
   private ParquetReader<Long> reader;
-  private boolean[] _keepColumns;
+  private boolean[] keepColumns;
+  private boolean adjustTimezone;
 
-  public VecParquetReader(Vec vec, ParquetMetadata metadata, ParseWriter writer, byte[] chunkSchema, boolean[] keepcolumns, int parseColumnNumber) {
-    this(vec, metadata, new WriterDelegate(writer, parseColumnNumber), chunkSchema, keepcolumns);
+  public VecParquetReader(Vec vec, ParquetMetadata metadata, ParseWriter writer, byte[] chunkSchema, boolean[] keepcolumns, int parseColumnNumber, boolean adjustTimezone) {
+    this(vec, metadata, new WriterDelegate(writer, parseColumnNumber), chunkSchema, keepcolumns, adjustTimezone);
   }
 
-  VecParquetReader(Vec vec, ParquetMetadata metadata, WriterDelegate writer, byte[] chunkSchema, boolean[] keepcolumns) {
+  VecParquetReader(Vec vec, ParquetMetadata metadata, WriterDelegate writer, byte[] chunkSchema, boolean[] keepcolumns, boolean adjustTimezone) {
     this.vec = vec;
     this.metadata = metadata;
     this.writer = writer;
     this.chunkSchema = chunkSchema;
-    _keepColumns = keepcolumns;
+    this.keepColumns = keepcolumns;
+    this.adjustTimezone = adjustTimezone;
   }
 
   /**
@@ -85,7 +87,7 @@ public class VecParquetReader implements Closeable {
   private void initReader() throws IOException {
     assert reader == null;
     final VecReaderEnv env = VecReaderEnv.make(vec);
-    ChunkReadSupport crSupport = new ChunkReadSupport(writer, chunkSchema, _keepColumns);
+    ChunkReadSupport crSupport = new ChunkReadSupport(writer, chunkSchema, keepColumns, adjustTimezone);
     ParquetReader.Builder<Long> prBuilder = ParquetReader.builder(crSupport, env.getPath())
             .withConf(env.getConf())
             .withFilter(new FilterCompat.Filter() {
@@ -112,27 +114,7 @@ public class VecParquetReader implements Closeable {
     FSDataInputStream f = null;
     try {
       f = (FSDataInputStream) H2O.getPM().openSeekable(vec);
-      final int FOOTER_LENGTH_SIZE = 4;
-      if (vec.length() < MAGIC.length + FOOTER_LENGTH_SIZE + MAGIC.length) { // MAGIC + data + footer + footerIndex + MAGIC
-        throw new RuntimeException("Vec doesn't represent a Parquet data (too short)");
-      }
-      long footerLengthIndex = vec.length() - FOOTER_LENGTH_SIZE - MAGIC.length;
-      f.seek(footerLengthIndex);
-      int footerLength = readIntLittleEndian(f);
-      byte[] magic = new byte[MAGIC.length];
-      f.readFully(magic);
-      if (!Arrays.equals(MAGIC, magic)) {
-        throw new RuntimeException("Vec is not a Parquet file. expected magic number at tail " +
-                Arrays.toString(MAGIC) + " but found " + Arrays.toString(magic));
-      }
-      long footerIndex = footerLengthIndex - footerLength;
-      if (footerIndex < MAGIC.length || footerIndex >= footerLengthIndex) {
-        throw new RuntimeException("corrupted file: the footer index is not within the Vec");
-      }
-      f.seek(footerIndex);
-      byte[] metadataBytes = new byte[footerLength];
-      f.readFully(metadataBytes);
-      return metadataBytes;
+      return readFooterAsBytes(vec.length(), f);
     } catch (IOException e) {
       throw new RuntimeException("Failed to read Parquet metadata", e);
     } finally {
@@ -144,6 +126,30 @@ public class VecParquetReader implements Closeable {
     }
   }
 
+  static byte[] readFooterAsBytes(final long length, FSDataInputStream f) throws IOException {
+    final int FOOTER_LENGTH_SIZE = 4;
+    if (length < MAGIC.length + FOOTER_LENGTH_SIZE + MAGIC.length) { // MAGIC + data + footer + footerIndex + MAGIC
+      throw new RuntimeException("Vec doesn't represent a Parquet data (too short)");
+    }
+    long footerLengthIndex = length - FOOTER_LENGTH_SIZE - MAGIC.length;
+    f.seek(footerLengthIndex);
+    int footerLength = readIntLittleEndian(f);
+    byte[] magic = new byte[MAGIC.length];
+    f.readFully(magic);
+    if (!Arrays.equals(MAGIC, magic)) {
+      throw new RuntimeException("Vec is not a Parquet file. expected magic number at tail " +
+              Arrays.toString(MAGIC) + " but found " + Arrays.toString(magic));
+    }
+    long footerIndex = footerLengthIndex - footerLength;
+    if (footerIndex < MAGIC.length || footerIndex >= footerLengthIndex) {
+      throw new RuntimeException("corrupted file: the footer index is not within the Vec");
+    }
+    f.seek(footerIndex);
+    byte[] metadataBytes = new byte[footerLength];
+    f.readFully(metadataBytes);
+    return metadataBytes;
+  }
+  
   public static ParquetMetadata readFooter(byte[] metadataBytes) {
     return readFooter(metadataBytes, NO_FILTER);
   }

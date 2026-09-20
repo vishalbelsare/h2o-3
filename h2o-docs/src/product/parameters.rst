@@ -53,12 +53,13 @@ This Appendix provides detailed descriptions of parameters that can be specified
    data-science/algo-params/fold_column
    data-science/algo-params/gainslift_bins
    data-science/algo-params/gradient_epsilon
-   data-science/algo-params/hglm
    data-science/algo-params/histogram_type
    data-science/algo-params/huber_alpha
    data-science/algo-params/ignore_const_cols
    data-science/algo-params/ignored_columns
    data-science/algo-params/impute_missing
+   data-science/algo-params/in_training_checkpoints_dir
+   data-science/algo-params/in_training_checkpoints_tree_interval
    data-science/algo-params/include_algos
    data-science/algo-params/inflection_point
    data-science/algo-params/init1
@@ -108,6 +109,7 @@ This Appendix provides detailed descriptions of parameters that can be specified
    data-science/algo-params/ntrees
    data-science/algo-params/objective_epsilon
    data-science/algo-params/offset_column
+   data-science/algo-params/out_of_bounds
    data-science/algo-params/pca_impl
    data-science/algo-params/pca_method
    data-science/algo-params/plug_values

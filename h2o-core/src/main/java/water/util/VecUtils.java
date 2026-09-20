@@ -3,11 +3,7 @@ package water.util;
 import water.*;
 import water.exceptions.H2OIllegalArgumentException;
 import water.exceptions.H2OIllegalValueException;
-import water.fvec.C0DChunk;
-import water.fvec.Chunk;
-import water.fvec.NewChunk;
-import water.fvec.Vec;
-import water.fvec.Frame;
+import water.fvec.*;
 import water.nbhm.NonBlockingHashMapLong;
 import water.parser.BufferedString;
 import water.parser.Categorical;
@@ -183,6 +179,35 @@ public class VecUtils {
     }
   }
 
+  public static Vec toIntegerVec(Vec src) {
+    switch (src.get_type()) {
+      case Vec.T_CAT:
+        return categoricalToInt(src);
+      case Vec.T_STR:
+        return stringToInteger(src);
+      case Vec.T_NUM:
+        return numToInteger(src);
+      default:
+        throw new H2OIllegalArgumentException("Unrecognized column type " + src.get_type_str()
+                + " given to toNumericVec()");
+    }
+  }
+
+  public static Vec numToInteger(final Vec src) {
+    Vec res = new MRTask() {
+      @Override public void map(Chunk srcV, NewChunk destV) {
+        int cLen = srcV._len;
+        for (int index=0; index<cLen; index++) {
+          if (!srcV.isNA(index))
+            destV.addNum(Math.round(srcV.atd(index)));
+          else
+            destV.addNA();
+        }
+      }
+    }.doAll(Vec.T_NUM, src).outputFrame().anyVec();
+    return res;
+  }
+
   /**
    * Create a new {@link Vec} of numeric values from a string {@link Vec}. Any rows that cannot be
    * converted to a number are set to NA.
@@ -225,6 +250,38 @@ public class VecUtils {
     return res;
   }
 
+  public static Vec stringToInteger(Vec src) {
+    if(!src.isString()) throw new H2OIllegalArgumentException("stringToNumeric conversion only works on string columns");
+    Vec res = new MRTask() {
+      @Override public void map(Chunk chk, NewChunk newChk){
+        if (chk instanceof C0DChunk) { // all NAs
+          for (int i=0; i < chk._len; i++)
+            newChk.addNA();
+        } else {
+          BufferedString tmpStr = new BufferedString();
+          for (int i=0; i < chk._len; i++) {
+            if (!chk.isNA(i)) {
+              tmpStr = chk.atStr(tmpStr, i);
+              switch (tmpStr.getNumericType()) {
+                case BufferedString.NA:
+                  newChk.addNA(); break;
+                case BufferedString.INT:
+                  newChk.addNum(Long.parseLong(tmpStr.toString()),0); break;
+                case BufferedString.REAL:
+                  long temp = Math.round(Double.parseDouble(tmpStr.toString()));
+                  newChk.addNum(temp); break;
+                default:
+                  throw new H2OIllegalValueException("Received unexpected type when parsing a string to a number.", this);
+              }
+            } else newChk.addNA();
+          }
+        }
+      }
+    }.doAll(Vec.T_NUM, src).outputFrame().anyVec();
+    assert res != null;
+    return res;
+  }
+  
   /**
    * Create a new {@link Vec} of numeric values from a categorical {@link Vec}.
    *
@@ -265,6 +322,7 @@ public class VecUtils {
     }
     return newVec;
   }
+  
 
   /**
    * Create a new {@link Vec} of string values from an existing {@link Vec}.
@@ -621,6 +679,63 @@ public class VecUtils {
     return newDomain;
   }
 
+  public static class CollectDomainWeights extends MRTask<CollectDomainWeights> {
+    private final int _s;
+    // OUT
+    private double[] _d;
+
+    public CollectDomainWeights(int s) {
+      _s = s;
+    }
+
+    @Override
+    public void map(Chunk c, Chunk weights) {
+      _d = MemoryManager.malloc8d(_s + 1);
+      for (int row = 0; row < c._len; row++)
+        if (!c.isNA(row)) {
+          double weight = weights != null ? weights.atd(row) : 1;
+          int level = (int) c.at8(row);
+          _d[level] += weight;
+        }
+    }
+
+    @Override
+    public void map(Chunk c) {
+      map(c, (Chunk) null);
+    }
+
+    @Override
+    public void reduce(CollectDomainWeights mrt) { 
+      if (mrt._d != null) {
+        ArrayUtils.add(_d, mrt._d);
+      }
+    }
+  }
+
+  /**
+   * Collect the frequencies of each level in a categorical Vec.
+   * 
+   * @param vec categorical Vec
+   * @param weights optional weight Vec
+   * @return (weighted) frequencies of each level of the input Vec
+   */
+  public static double[] collectDomainWeights(final Vec vec, final Vec weights) {
+    if (!vec.isCategorical())
+      throw new IllegalArgumentException("Unable to collect domain on a non-categorical vector.");
+    final CollectDomainWeights cdw = new CollectDomainWeights((int) vec.max());
+    if (weights != null) {
+      if (weights.naCnt() > 0) {
+        throw new IllegalArgumentException("The vector of weights cannot contain any NAs");
+      }
+      if (weights.min() < 0) {
+        throw new IllegalArgumentException("Negative weights are not allowed.");
+      }
+      return cdw.doAll(vec, weights)._d;
+    } else {
+      return cdw.doAll(vec)._d;
+    }
+  }
+
   public static void deleteVecs(Vec[] vs, int cnt) {
     Futures f = new Futures();
     for (int i =0; i < cnt; i++) vs[cnt].remove(f);
@@ -882,6 +997,14 @@ public class VecUtils {
       result += mrt.result;
     }
   }
+  
+  public static class SequenceProduct extends MRTask<SequenceProduct> {
+    @Override public void map(Chunk[] c, NewChunk[] nc) {
+      for (int i = 0; i < c[0]._len; i++) {
+        nc[0].addNum(c[0].atd(i) * c[1].atd(i));
+      }
+    }
+  }
 
   /**
    * Randomly shuffle a Vec using Fisher Yates shuffle 
@@ -968,7 +1091,43 @@ public class VecUtils {
     return v;
   }
 
+  public static class MinMaxTask extends MRTask<MinMaxTask> {
+    public double _min = Double.POSITIVE_INFINITY;
+    public double _max = Double.NEGATIVE_INFINITY;
 
+    @Override
+    public void map(Chunk xs, Chunk weights) {
+      double min = _min;
+      double max = _max;
+      for (int i = 0; i < xs._len; i++) {
+        if (weights.atd(i) != 0) {
+          double value = xs.atd(i);
+          if (value < min)
+            min = value;
+          if (value > max)
+            max = value;
+        }
+      }
+      _min = min;
+      _max = max;
+    }
 
+    @Override
+    public void reduce(MinMaxTask mrt) {
+      if (!mrt.isEmpty()) {
+        _min = Math.min(_min, mrt._min);
+        _max = Math.max(_max, mrt._max);
+      }
+    }
+
+    private boolean isEmpty() {
+      return _min == Double.POSITIVE_INFINITY && _max == Double.NEGATIVE_INFINITY;
+    }
+
+  }
+
+  public static MinMaxTask findMinMax(Vec numVec, Vec weightVec) {
+    return new MinMaxTask().doAll(numVec, weightVec);
+  }
 
 }

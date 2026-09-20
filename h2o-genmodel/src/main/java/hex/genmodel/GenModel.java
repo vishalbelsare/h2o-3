@@ -28,11 +28,23 @@ public abstract class GenModel implements IGenModel, IGeneratedModel, Serializab
 
   /** Name of the column with offsets (used for certain types of models). */
   public String _offsetColumn;
+  public String _foldColumn;
+  
+  /** Name of the column determine treatment group, currently only for UpliftDRF models */
+  public String _treatmentColumn;
 
   public GenModel(String[] names, String[][] domains, String responseColumn) {
     _names = names;
     _domains = domains;
     _responseColumn = responseColumn;
+    _treatmentColumn = null;
+  }
+
+  public GenModel(String[] names, String[][] domains, String responseColumn, String treatmentColumn) {
+    _names = names;
+    _domains = domains;
+    _responseColumn = responseColumn;
+    _treatmentColumn = treatmentColumn;
   }
 
   /**
@@ -138,7 +150,9 @@ public abstract class GenModel implements IGenModel, IGeneratedModel, Serializab
       case CoxPH:
         outputNames = new String[]{"lp"};
         break;
-
+      case BinomialUplift:
+        outputNames = new String[]{"uplift_predict", "p_y1_with_treatment", "p_y1_without_treatment"};
+        break;
       default:
         throw new UnsupportedOperationException("Getting output column names for model category '" + 
                 category + "' is not supported.");
@@ -146,7 +160,41 @@ public abstract class GenModel implements IGenModel, IGeneratedModel, Serializab
 
     return outputNames;
   }
-  
+
+  /**
+   * Companion method to getOutputNames. For each output column specifies
+   * what is the domain of the column.
+   * 
+   * @return array of domain values for each output column, if the type of the column is not categorical use null
+   */
+  public String[][] getOutputDomains() {
+    final ModelCategory category = getModelCategory();
+    final String[][] outputDomains = new String[getOutputNames().length][];
+    switch (category) {
+      case Binomial:
+      case Multinomial:
+      case Ordinal:
+        outputDomains[0] = getDomainValues(getResponseIdx());
+        break;
+      case Regression:
+      case Clustering:
+      case AutoEncoder:
+      case TargetEncoder:
+      case DimReduction:
+      case WordEmbedding:
+      case CoxPH:
+      case AnomalyDetection:
+      case KLime:
+      case BinomialUplift:
+        // all numeric, nothing to set here
+        break;
+      default:
+        throw new UnsupportedOperationException("Getting output domains for model category '" +
+                category + "' is not yet supported.");
+    }
+    return outputDomains;
+  }
+
   /** Override this for models that may produce results in different categories. */
   @Override public EnumSet<ModelCategory> getModelCategories() {
     return EnumSet.of(getModelCategory());
@@ -780,5 +828,17 @@ public abstract class GenModel implements IGenModel, IGeneratedModel, Serializab
       }
     }
   }
-  
+
+  /**
+   * For internal use only - can be removed at any time!
+   * 
+   * Creates a version of the MOJO that can be used by a thread in a multi-threaded environment.
+   * This is a temporary workaround and proper fix should be put in place for the MOJOs that are not currently
+   * thread safe (GAM).
+   */
+  @Deprecated
+  public GenModel internal_threadSafeInstance() {
+    return this;
+  }
+
 }

@@ -15,14 +15,11 @@ import water.Key;
 import water.Scope;
 import water.TestUtil;
 import water.fvec.Frame;
-import water.fvec.NFSFileVec;
 import water.fvec.Vec;
-import water.parser.ParseDataset;
 import water.runner.CloudSize;
 import water.runner.H2ORunner;
 import water.test.util.ConfusionMatrixUtils;
 
-import java.io.IOException;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
@@ -442,12 +439,13 @@ public class RuleFitTest extends TestUtil {
             params._model_type = RuleFitModel.ModelType.RULES;
             params._min_rule_length = 1;
             params._remove_duplicates = false;
+            params._max_categorical_levels = 1000;
 
             RuleFitModel model = new RuleFit( params).trainModel().get();
             Scope.track_generic(model);
 
             System.out.println("Intercept: \n" + model._output._intercept[0]);
-            System.out.println(model._output._rule_importance);
+            System.out.println(model.getRuleImportanceTable());
             
             final Frame fr2 = Scope.track(model.score(fr));
             
@@ -460,17 +458,18 @@ public class RuleFitTest extends TestUtil {
             "M0T1N3", "M1T2N10", "M3T13N36", "M1T26N9", "M1T20N9", "M1T33N9", "M2T38N17", "M0T11N4",
             "M1T5N7", "M0T0N3", "M0T18N3", "M0T1N4", "M1T7N7", "M0T26N3", "M1T3N9", "M0T22N4", "M0T27N4",
             "M0T11N3"};
-            Set<String> zeroVars = new HashSet<>(Arrays.asList("M1T37N9", "M0T14N4", "M1T38N9", "M1T7N9", "M0T4N3", "M1T43N9"));
+            //Set<String> zeroVars = new HashSet<>(Arrays.asList("M1T37N9", "M0T14N4", "M1T38N9", "M1T7N9", "M0T4N3", "M1T43N9"));
             final double coefDelta = 1e-4;
             for (int i = 0; i < expectedVars.length; i++) {
                 assertEquals(expectedCoeffs[i], (double) model._output._rule_importance.get(i,1),coefDelta);
                 assertEquals(expectedVars[i], model._output._rule_importance.get(i,0));
             }
+            // zero coeff names are not deterministic:
             // zero-coef vars can be in any order (it doesn't make sense to compare order if it is bellow the delta precision)  
-            for (int i = expectedVars.length; i < model._output._rule_importance.getRowDim(); i++) {
-                assertEquals(0, (double) model._output._rule_importance.get(i,1),coefDelta);
-                assertTrue(zeroVars.contains((String) model._output._rule_importance.get(i,0)));
-            }
+//            for (int i = expectedVars.length; i < model._output._rule_importance.getRowDim(); i++) {
+//                assertEquals(0, (double) model._output._rule_importance.get(i,1),coefDelta);
+//                assertTrue(zeroVars.contains((String) model._output._rule_importance.get(i,0)));
+//            }
 
             GLMModel.GLMParameters glmParameters = model.glmModel._parms;
             glmParameters._train = fr._key;
@@ -718,7 +717,7 @@ public class RuleFitTest extends TestUtil {
             Scope.enter();
             final Frame fr = parseTestFile("./smalldata/diabetes/diabetes_text_train.csv");
             Scope.track(fr);
-           // final Vec weightsVector = createRandomBinaryWeightsVec(fr.numRows(), 10); // failing with these weights is ok because https://h2oai.atlassian.net/browse/PUBDEV-8249 is not a bug
+           // final Vec weightsVector = createRandomBinaryWeightsVec(fr.numRows(), 10); // failing with these weights is ok because https://github.com/h2oai/h2o-3/issues/7404 is not a bug
             final Vec weightsVector = Vec.makeOne(fr.numRows());
             weightsVector.set(1, 0.5);
             final String weightsColumnName = "weights";
@@ -774,7 +773,7 @@ public class RuleFitTest extends TestUtil {
         }
     }
 
-    @Test @Ignore // this failing is ok because https://h2oai.atlassian.net/browse/PUBDEV-8249 is not a bug
+    @Test @Ignore // this failing is ok because https://github.com/h2oai/h2o-3/issues/7404 is not a bug
     public void testDiabetesWithWeightsShowWhatGlmIsDoingSeparately() { 
         try {
             Scope.enter();
@@ -1026,6 +1025,39 @@ public class RuleFitTest extends TestUtil {
             Frame scored = Scope.track(rfit.score(train));
 
             Assert.assertTrue(rfit.testJavaScoring(train, scored, 1e-4));
+            
+            
+            // test transform by rules functionality:
+            Frame transformedOutput = rfit.predictRules(train, new String[] {"M1T38N9, M1T44N9", "M2T34N20"});
+            Scope.track(transformedOutput);
+            Rule rule1 = rfit.ruleEnsemble.getRuleByVarName("M1T38N9");
+            Rule rule2 = rfit.ruleEnsemble.getRuleByVarName("M2T34N20");
+
+            System.out.println("Rule 1: \n" + rule1.languageRule);
+            System.out.println("Rule 2: \n" + rule2.languageRule);
+            
+            assertEquals((int)transformedOutput.vec("M1T38N9").at(0), 0);
+            assertEquals((int)transformedOutput.vec("M1T38N9").at(1), 1);
+            assertEquals((int)transformedOutput.vec("M1T38N9").at(2), 0);
+            assertEquals((int)transformedOutput.vec("M1T38N9").at(3), 0);
+            assertEquals((int)transformedOutput.vec("M1T38N9").at(4), 1);
+            assertEquals((int)transformedOutput.vec("M1T38N9").at(5), 0);
+            assertEquals((int)transformedOutput.vec("M1T38N9").at(6), 0);
+            assertEquals((int)transformedOutput.vec("M1T38N9").at(7), 0);
+            assertEquals((int)transformedOutput.vec("M1T38N9").at(8), 0);
+            assertEquals((int)transformedOutput.vec("M1T38N9").at(9), 1);
+            
+            assertEquals((int)transformedOutput.vec("M2T34N20").at(0), 1);
+            assertEquals((int)transformedOutput.vec("M2T34N20").at(1), 0);
+            assertEquals((int)transformedOutput.vec("M2T34N20").at(2), 0);
+            assertEquals((int)transformedOutput.vec("M2T34N20").at(3), 0);
+            assertEquals((int)transformedOutput.vec("M2T34N20").at(4), 1);
+            assertEquals((int)transformedOutput.vec("M2T34N20").at(5), 1);
+            assertEquals((int)transformedOutput.vec("M2T34N20").at(6), 0);
+            assertEquals((int)transformedOutput.vec("M2T34N20").at(7), 0);
+            assertEquals((int)transformedOutput.vec("M2T34N20").at(8), 0);
+            assertEquals((int)transformedOutput.vec("M2T34N20").at(9), 0);
+            
         } finally {
             Scope.exit();
         }

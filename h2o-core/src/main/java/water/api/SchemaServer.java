@@ -82,7 +82,7 @@ public class SchemaServer {
    * @throws water.exceptions.H2OFailException if there is a name collision, if the type parameters are bad, or if
    *         the version is bad
    */
-  private static void register(Schema schema) {
+  public static void register(Schema schema) {
     Class clz = schema.getClass();
     synchronized(clz) {
       String clzname = clz.getSimpleName();
@@ -249,6 +249,10 @@ public class SchemaServer {
   public static Schema schema(int version, Iced impl) {
     if (version == -1) version = getLatestVersion();
     return schema(version, impl.getClass().getSimpleName());
+  }
+
+  public static Schema schema (Iced impl) {
+    return schema(STABLE_VERSION, impl);
   }
 
   /**

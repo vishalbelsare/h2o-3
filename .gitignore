@@ -6,7 +6,7 @@
 *hs_err_pid*
 *stdout.txt
 *~
-/AwsCredentials.properties
+AwsCredentials.properties
 TAGS
 bin/
 build.local.conf
@@ -114,3 +114,5 @@ leak-check.out
 
 # Terraform
 .terraform/
+
+.claude/

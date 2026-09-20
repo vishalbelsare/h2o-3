@@ -4,32 +4,47 @@ from inspect import getdoc
 import re
 
 import h2o
+from h2o import telemetry as _telemetry
 from h2o.base import Keyed
 from h2o.estimators import H2OEstimator
 from h2o.exceptions import H2OResponseError, H2OValueError
 from h2o.frame import H2OFrame
 from h2o.job import H2OJob
+from h2o.utils.compatibility import *  # NOQA
 from h2o.utils.shared_utils import check_id
 from h2o.utils.typechecks import assert_is_type, is_type, numeric
 from ._base import H2OAutoMLBaseMixin, _fetch_state
+
+
+def _h2o_version_safe():
+    try:
+        from h2o import __version__ as _v
+        return _v
+    except Exception:
+        return ""
 
 
 _params_doc_ = dict()  # holds the doc per param extracted from H2OAutoML constructor
 
 
 def _extract_params_doc(docstr):
-    pat = re.compile(r"^:param (\w+ )?(?P<name>\w+):\s?(?P<doc>.*)")  # match param doc-start in Sphinx format ":param type name: description"
+    pat = re.compile(r"^:param (?P<type>.*? )?(?P<name>\w+):\s?(?P<doc>.*)")  # match param doc-start in Sphinx format ":param type name: description"
     lines = docstr.splitlines()
-    param, doc = None, None
+    param, ptype, pdoc = None, None, None
     for l in lines:
         m = pat.match(l)
         if m:
             if param:
-                _params_doc_[param] = "\n".join(doc)
+                fulldoc = "\n".join(pdoc)
+                if ptype:
+                    fulldoc += "\n\nType: %s" % ptype
+                _params_doc_[param] = fulldoc
+
             param = m.group('name')
-            doc = [m.group('doc')]
+            ptype = m.group('type')
+            pdoc = [m.group('doc')]
         elif param:
-            doc.append(l)
+            pdoc.append(l)
 
 
 def _aml_property(param_path, name=None, types=None, validate_fn=None, freezable=False, set_input=True):
@@ -124,13 +139,14 @@ class H2OAutoML(H2OAutoMLBaseMixin, Keyed):
     """
 
     def __init__(self,
-                 nfolds=5,
+                 nfolds=-1,
                  balance_classes=False,
                  class_sampling_factors=None,
                  max_after_balance_size=5.0,
                  max_runtime_secs=None,
                  max_runtime_secs_per_model=None,
                  max_models=None,
+                 distribution="AUTO",
                  stopping_metric="AUTO",
                  stopping_tolerance=None,
                  stopping_rounds=3,
@@ -146,16 +162,16 @@ class H2OAutoML(H2OAutoMLBaseMixin, Keyed):
                  keep_cross_validation_models=False,
                  keep_cross_validation_fold_assignment=False,
                  sort_metric="AUTO",
+                 custom_metric_func=None,
                  export_checkpoints_dir=None,
                  verbosity="warn",
                  **kwargs):
         """
         Create a new H2OAutoML instance.
-        
-        :param int nfolds: Number of folds for k-fold cross-validation.
-            Use ``0`` to disable cross-validation; this will also disable Stacked Ensemble (thus decreasing the overall model performance).
-            Defaults to ``5``.
 
+        :param int nfolds: Specify a value >= 2 for the number of folds for k-fold cross-validation for the models in the AutoML or specify ``-1`` (default)
+            to let AutoML choose what it will do. If the data is big enough (depending on the cluster resources), it will create a blending frame
+            and will not do cross-validation. Otherwise, it will use 5 fold cross-validation.        
         :param bool balance_classes: Specify whether to oversample the minority classes to balance the class distribution. This option can increase
             the data frame size. This option is only applicable for classification. If the oversampled size of the dataset exceeds the maximum size
             calculated using the ``max_after_balance_size`` parameter, then the majority classes will be undersampled to satisfy the size limit.
@@ -166,17 +182,37 @@ class H2OAutoML(H2OAutoMLBaseMixin, Keyed):
             Requires ``balance_classes``.
             Defaults to ``5.0``.
         :param int max_runtime_secs: Specify the maximum time that the AutoML process will run for.
-            If neither ``max_runtime_secs`` nor ``max_models`` are specified by the user, then ``max_runtime_secs`` dynamically
+            If both ``max_runtime_secs`` and ``max_models`` are specified, then the AutoML run will stop as soon as it hits either of these limits.
+            If neither ``max_runtime_secs`` nor ``max_models`` are specified, then ``max_runtime_secs`` dynamically
             defaults to 3600 seconds (1 hour). Otherwise, defaults to ``0`` (no limit).
         :param int max_runtime_secs_per_model: Controls the max time the AutoML run will dedicate to each individual model.
             Defaults to ``0`` (disabled: no time limit).
+            Note that models constrained by a time budget are not guaranteed reproducible.
         :param int max_models: Specify the maximum number of models to build in an AutoML run, excluding the Stacked Ensemble models.
             Defaults to ``None`` (disabled: no limitation).
+            Always set this parameter to ensure AutoML reproducibility: all models are then trained until convergence and none is constrained by a time budget.
+        :param Union[str, dict] distribution: Distribution function used by algorithms that support it; other algorithms
+            use their defaults.  Possible values: "AUTO", "bernoulli", "multinomial", "gaussian", "poisson", "gamma",
+            "tweedie", "laplace", "quantile", "huber", "custom", and for parameterized distributions dictionary form is
+            used to specify the parameter, e.g., ``dict(type="tweedie", tweedie_power=1.5)``.
+            Defaults to ``AUTO``.
         :param str stopping_metric: Specifies the metric to use for early stopping. 
             The available options are:
-            ``"AUTO"`` (This defaults to ``"logloss"`` for classification, ``"deviance"`` for regression),
-            ``"deviance"``, ``"logloss"``, ``"mse"``, ``"rmse"``, ``"mae"``, ``"rmsle"``, ``"auc"``, ``aucpr``, ``"lift_top_group"``,
-            ``"misclassification"``, ``"mean_per_class_error"``, ``"r2"``.
+            
+                - ``"AUTO"`` (This defaults to ``"logloss"`` for classification, ``"deviance"`` for regression)
+                - ``"deviance"``
+                - ``"logloss"``
+                - ``"mse"``
+                - ``"rmse"``
+                - ``"mae"``
+                - ``"rmsle"``
+                - ``"auc"``
+                - ``aucpr``
+                - ``"lift_top_group"``
+                - ``"misclassification"``
+                - ``"mean_per_class_error"``
+                - ``"r2"``
+                
             Defaults to ``"AUTO"``.
         :param float stopping_tolerance: Specify the relative tolerance for the metric-based stopping criterion to stop a grid search and
             the training of individual models within the AutoML run.
@@ -237,10 +273,34 @@ class H2OAutoML(H2OAutoMLBaseMixin, Keyed):
             Deleting them will save memory in the H2O cluster. 
             Defaults to ``False``.
         :param sort_metric: Metric to sort the leaderboard by at the end of an AutoML run. 
-            For binomial classification choose between ``"auc"``, ``"aucpr"``, ``"logloss"``, ``"mean_per_class_error"``, ``"rmse"``, ``"mse"``.
-            For multinomial classification choose between ``"mean_per_class_error"``, ``"logloss"``, ``"rmse"``, ``"mse"``.
-            For regression choose between ``"deviance"``, ``"rmse"``, ``"mse"``, ``"mae"``, ``"rmlse"``.
+            For binomial classification, select from the following options:
+            
+                - ``"auc"``
+                - ``"aucpr"``
+                - ``"logloss"``
+                - ``"mean_per_class_error"``
+                - ``"rmse"``
+                - ``"mse"``
+                
+            For multinomial classification, select from the following options:
+            
+                - ``"mean_per_class_error"``
+                - ``"logloss"``
+                - ``"rmse"``
+                - ``"mse"``
+                
+            For regression, select from the following options:
+
+                - ``"deviance"``
+                - ``"rmse"``
+                - ``"mse"``
+                - ``"mae"``
+                - ``"rmlse"``
+                
             Defaults to ``"AUTO"`` (This translates to ``"auc"`` for binomial classification, ``"mean_per_class_error"`` for multinomial classification, ``"deviance"`` for regression).
+        :param custom_metric_func: Reference to custom evaluation function, format: `language:keyName=funcName`
+               Defaults to ``None``.
+        :type custom_metric_func: str, optional
         :param export_checkpoints_dir: Path to a directory where every model will be stored in binary form.
         :param verbosity: Verbosity of the backend messages printed during training.
             Available options are ``None`` (live log disabled), ``"debug"``, ``"info"``, ``"warn"`` or ``"error"``.
@@ -284,6 +344,8 @@ class H2OAutoML(H2OAutoMLBaseMixin, Keyed):
 
         self.project_name = project_name
         self.nfolds = nfolds
+        self.distribution = distribution
+        self.custom_metric_func = custom_metric_func
         self.balance_classes = balance_classes
         self.class_sampling_factors = class_sampling_factors
         self.max_after_balance_size = max_after_balance_size
@@ -323,14 +385,16 @@ class H2OAutoML(H2OAutoMLBaseMixin, Keyed):
         return project_name
 
     def __validate_nfolds(self, nfolds):
-        assert nfolds == 0 or nfolds > 1, "nfolds set to %s; use nfolds >=2 if you want cross-validated metrics and Stacked Ensembles or use nfolds = 0 to disable." % nfolds
+        assert nfolds in (-1, 0) or nfolds > 1, ("nfolds set to %s; use nfolds >=2 if you want cross-validated metrics "
+                                                 "and Stacked Ensembles or use nfolds = 0 to disable or nfolds = -1 to "
+                                                 "let h2o choose automatically." % nfolds)
         return nfolds
 
     def __validate_modeling_plan(self, modeling_plan):
         if modeling_plan is None:
             return None
 
-        supported_aliases = ['all', 'defaults', 'grids']
+        supported_aliases = PList(['all', 'defaults', 'grids'])
 
         def assert_is_step_def(sd):
             assert 'name' in sd, "each definition must have a 'name' key"
@@ -399,11 +463,46 @@ class H2OAutoML(H2OAutoMLBaseMixin, Keyed):
     def __validate_frame(self, fr, name=None, required=False):
         return H2OFrame._validate(fr, name, required=required)
 
+    def __validate_distribution(self, distribution):
+        if is_type(distribution, str):
+            distribution = distribution.lower()
+            if distribution == "custom":
+                raise H2OValueError('Distribution "custom" has to be specified as a '
+                                    'dictionary with their respective parameters, e.g., '
+                                    '`dict(type = \"custom\", custom_distribution_func = \"...\"))`.')
+            return distribution
+        if is_type(distribution, dict):
+            dist = distribution["type"].lower()
+            allowed_distribution_parameters = dict(
+                custom='custom_distribution_func',
+                huber='huber_alpha',
+                quantile='quantile_alpha',
+                tweedie='tweedie_power'
+            )
+            assert distribution.get(allowed_distribution_parameters.get(dist)) is not None or len(distribution) == 1, (
+                    "Distribution dictionary should contain distribution and a distribution "
+                    "parameter. For example `dict(type=\"{}\", {}=...)`."
+            ).format(dist, allowed_distribution_parameters[dist])
+            if distribution["type"] == "custom" and "custom_distribution_func" not in distribution.keys():
+                raise H2OValueError('Distribution "custom" has to be specified as a '
+                            'dictionary with their respective parameters, e.g., '
+                            '`dict(type = \"custom\", custom_distribution_func = \"...\"))`.')
+            if allowed_distribution_parameters.get(dist) in distribution.keys():
+                setattr(self, "_"+allowed_distribution_parameters[dist], distribution[allowed_distribution_parameters[dist]])
+            return dist
+
+
     _extract_params_doc(getdoc(__init__))
     project_name = _aml_property('build_control.project_name', types=(None, str), freezable=True,
                                  validate_fn=__validate_project_name)
     nfolds = _aml_property('build_control.nfolds', types=(int,), freezable=True,
                            validate_fn=__validate_nfolds)
+    distribution = _aml_property('build_control.distribution', types=(str, dict), freezable=True, validate_fn=__validate_distribution)
+    _custom_distribution_func = _aml_property('build_control.custom_distribution_func', types=(str,), freezable=True)
+    _huber_alpha = _aml_property('build_control.huber_alpha', types=(numeric,), freezable=True)
+    _tweedie_power = _aml_property('build_control.tweedie_power', types=(numeric,), freezable=True)
+    _quantile_alpha = _aml_property('build_control.quantile_alpha', types=(numeric,), freezable=True)
+    custom_metric_func = _aml_property('build_control.custom_metric_func', types=(str, None))
     balance_classes = _aml_property('build_control.balance_classes', types=(bool,), freezable=True)
     class_sampling_factors = _aml_property('build_control.class_sampling_factors', types=(None, [numeric]), freezable=True)
     max_after_balance_size = _aml_property('build_control.max_after_balance_size', types=(None, numeric), freezable=True)
@@ -447,7 +546,7 @@ class H2OAutoML(H2OAutoMLBaseMixin, Keyed):
     blending_frame = _aml_property('input_spec.blending_frame', set_input=False,
                                    validate_fn=ft.partial(__validate_frame, name='blending_frame'))
     response_column = _aml_property('input_spec.response_column', types=(str,))
-
+    
     #---------------------------------------------------------------------------
     # Basic properties
     #---------------------------------------------------------------------------
@@ -588,13 +687,48 @@ class H2OAutoML(H2OAutoMLBaseMixin, Keyed):
 
         self._job = H2OJob(resp['job'], "AutoML")
         poll_updates = ft.partial(self._poll_training_updates, verbosity=self._verbosity, state={})
+        outcome = "ok"
         try:
-            self._job.poll(poll_updates=poll_updates)
+            try:
+                self._job.poll(poll_updates=poll_updates)
+            finally:
+                poll_updates(self._job, 1)
+            self._fetch()
+            return self.leader
+        except BaseException:
+            outcome = "error"
+            raise
         finally:
-            poll_updates(self._job, 1)
-
-        self._fetch()
-        return self.leader
+            # Fire-and-forget telemetry; never raises. One event per train() call,
+            # including grid/sub-models. Per the contract, `algo` is the leader
+            # model's algorithm (never the literal "automl").
+            try:
+                leader_algo = ""
+                try:
+                    # Resolve the leader once; the property may query the backend.
+                    leader = self.leader
+                    if leader is not None and hasattr(leader, "_model_json"):
+                        leader_algo = (leader._model_json or {}).get("algo", "") or ""
+                except Exception:
+                    pass
+                lb_size = None
+                try:
+                    if self._leaderboard is not None:
+                        lb_size = int(self._leaderboard.nrow or 0)
+                except Exception:
+                    pass
+                _telemetry.send_automl_run(
+                    _h2o_version_safe(),
+                    algo=leader_algo,
+                    family=None,
+                    outcome=outcome,
+                    max_models=getattr(self, "max_models", None),
+                    max_runtime_secs=getattr(self, "max_runtime_secs", None),
+                    sort_metric=(getattr(self, "sort_metric", None) or "").lower() or None,
+                    leaderboard_size=lb_size,
+                )
+            except Exception:
+                pass
 
     #---------------------------------------------------------------------------
     # Predict with AutoML
@@ -640,7 +774,6 @@ class H2OAutoML(H2OAutoMLBaseMixin, Keyed):
         levels = ['debug', 'info', 'warn', 'error']
         if verbosity is None or verbosity.lower() not in levels:
             return
-
         try:
             if job.progress > state.get('last_job_progress', 0):
                 events_table = _fetch_state(job.dest_key, properties=[], verbosity=verbosity)['json']['event_log_table']

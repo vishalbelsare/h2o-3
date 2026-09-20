@@ -16,7 +16,10 @@ public class RegisterRestApi extends AlgoAbstractRegister {
   @Override
   public void registerEndPoints(RestApiContext context) {
     XGBoostExtension ext = (XGBoostExtension) ExtensionManager.getInstance().getCoreExtension(XGBoostExtension.NAME);
-    ext.logNativeLibInfo();
+    if (ext != null) {
+      // We might not have the extension available if running from h2o-bindings
+      ext.logNativeLibInfo();
+    }
     XGBoost xgBoostMB = new XGBoost(true);
     // Register XGBoost model builder REST API
     registerModelBuilder(context, xgBoostMB, SchemaServer.getStableVersion());
@@ -35,6 +38,11 @@ public class RegisterRestApi extends AlgoAbstractRegister {
         "remote_xgb_update", "POST /3/XGBoostExecutor.update",
         RemoteXGBoostHandler.class, "update",
         "Remote XGBoost execution - update"
+    );
+    context.registerEndpoint(
+            "remote_xgb_metric", "POST /3/XGBoostExecutor.getEvalMetric",
+            RemoteXGBoostHandler.class, "getEvalMetric",
+            "Remote XGBoost execution - getEvalMetric"
     );
     context.registerEndpoint(
         "remote_xgb_booster", "POST /3/XGBoostExecutor.getBooster",

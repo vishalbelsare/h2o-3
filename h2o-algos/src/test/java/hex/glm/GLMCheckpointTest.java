@@ -60,6 +60,39 @@ public class GLMCheckpointTest extends TestUtil {
   }
 
   @Test
+  public void testCheckpointDefaultFamilyWontFail() {
+    Frame tfr = null;
+    GLMModel glm = null;
+    GLMModel glm2 = null;
+
+    try {
+      tfr = parseTestFile("./smalldata/iris/iris.csv");
+      GLMModel.GLMParameters parms = new GLMModel.GLMParameters();
+
+      parms._train = tfr._key;
+      parms._response_column = "C5";
+      parms._seed = 0xdecaf;
+      parms._solver = IRLSM;
+
+      glm = new GLM(parms).trainModel().get();
+
+      GLMModel.GLMParameters parms2 = new GLMModel.GLMParameters();
+      parms2._train = tfr._key;
+      parms2._response_column = "C5";
+      parms2._seed = 0xdecaf;
+      parms2._checkpoint = glm._key;
+      parms2._solver = IRLSM;
+
+      glm2 = new GLM(parms2).trainModel().get();
+
+    } finally {
+      if (tfr != null) tfr.delete();
+      if (glm != null) glm.delete();
+      if (glm2 != null) glm2.delete();
+    }
+  }
+
+  @Test
   public void testRestoreLambdaScoringHistory() {
     try {
       Scope.enter();
@@ -100,12 +133,12 @@ public class GLMCheckpointTest extends TestUtil {
                     "deviance_test", "alpha"}
             : new String[]{"iteration", "timestamp", "negative_log_likelihood", "objective", "sum(etai-eta0)^2",
             "convergence"};
-    int num2Copy = parms._HGLM || parms._lambda_search ? colHeaders2Restore.length : colHeaders2Restore.length-2;
+    int num2Copy = parms._lambda_search ? colHeaders2Restore.length : colHeaders2Restore.length-2;
     int[] colHeadersIndex = grabHeaderIndex(scoringHistory, num2Copy, colHeaders2Restore);
     if (parms._lambda_search)
       lscHistory.restoreFromCheckpoint(scoringHistory, colHeadersIndex);
     else
-      scHistory.restoreFromCheckpoint(scoringHistory, colHeadersIndex, parms._HGLM);
+      scHistory.restoreFromCheckpoint(scoringHistory, colHeadersIndex);
     return colHeadersIndex;
   }
 

@@ -1,7 +1,6 @@
 package hex.glm;
 
 import hex.ModelMojoWriter;
-import hex.glm.GLMModel.GLMParameters.MissingValuesHandling;
 
 import java.io.IOException;
 
@@ -32,14 +31,18 @@ public class GLMMojoWriter extends ModelMojoWriter<GLMModel, GLMModel.GLMParamet
       writekv("num_means", model.dinfo().numNAFill());
       writekv("cat_modes", model.dinfo().catNAFill());
     }
-
-    writekv("beta", model.beta_internal());
+    if (model._parms._control_variables != null && model._parms._control_variables.length > 0)
+      writekv("beta", model._output.getControlValBeta(model.beta_internal().clone()));  // "The Control Variables Coefficients"
+    else
+      writekv("beta", model.beta_internal());  // "The Coefficients"
 
     writekv("family", model._parms._family);
     writekv("link", model._parms._link);
 
     if (GLMModel.GLMParameters.Family.tweedie.equals(model._parms._family))
       writekv("tweedie_link_power", model._parms._tweedie_link_power);
+
+    writekv("dispersion_estimated", (model._parms._compute_p_values ? model._parms._dispersion_estimated : 1.0));
   }
 
 }

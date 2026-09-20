@@ -1,6 +1,7 @@
 #' Starting H2O For examples
 #'
 #' @name aaa
+#' @noRd
 #' @examples
 #' \dontrun{
 #' if (Sys.info()['sysname'] == "Darwin" && Sys.info()['release'] == '13.4.0') {
@@ -14,6 +15,7 @@ NULL
 #' Shutdown H2O cluster after examples run
 #'
 #' @name zzz
+#' @noRd
 #' @examples
 #' \dontrun{
 #' library(h2o)
@@ -42,10 +44,6 @@ NULL
 .h2o.logRest <- function(message) {
   if (.h2o.isLogging())
     write(x = message, file = .h2o.getLogFileName(), append = TRUE)
-}
-
-h2o.logIt <- function(m, tmp, commandOrErr, isPost = TRUE) {
-  # Legacy.  Do nothing.
 }
 
 #' Start Writing H2O R Logs

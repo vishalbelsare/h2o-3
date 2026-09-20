@@ -369,7 +369,7 @@ class NumpyDocString(object):
         idx = self['index']
         out = []
         out += ['.. index:: %s' % idx.get('default','')]
-        for section, references in idx.iteritems():
+        for section, references in idx.items():
             if section == 'default':
                 continue
             out += ['   :%s: %s' % (section, ', '.join(references))]
@@ -425,7 +425,7 @@ class FunctionDoc(NumpyDocString):
             func, func_name = self.get_func()
             try:
                 # try to read signature
-                argspec = inspect.getargspec(func)
+                argspec = inspect.getfullargspec(func)
                 argspec = inspect.formatargspec(*argspec)
                 argspec = argspec.replace('*','\*')
                 signature = '%s%s' % (func_name, argspec)

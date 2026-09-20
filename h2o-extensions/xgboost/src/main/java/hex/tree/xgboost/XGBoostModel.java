@@ -12,8 +12,7 @@ import hex.genmodel.algos.xgboost.XGBoostJavaMojoModel;
 import hex.genmodel.algos.xgboost.XGBoostMojoModel;
 import hex.genmodel.utils.DistributionFamily;
 import hex.tree.FriedmanPopescusH;
-import hex.tree.PlattScalingHelper;
-import hex.tree.SharedTreeModel;
+import hex.tree.CalibrationHelper;
 import hex.tree.xgboost.predict.*;
 import hex.tree.xgboost.util.PredictConfiguration;
 import hex.util.EffectiveParametersUtils;
@@ -22,10 +21,8 @@ import water.*;
 import water.codegen.CodeGeneratorPipeline;
 import water.fvec.Frame;
 import water.fvec.Vec;
-import water.util.ArrayUtils;
-import water.util.JCodeGen;
-import water.util.SBPrintStream;
-import water.util.TwoDimTable;
+import water.udf.CFuncRef;
+import water.util.*;
 
 import java.util.*;
 import java.util.function.Consumer;
@@ -41,14 +38,14 @@ public class XGBoostModel extends Model<XGBoostModel, XGBoostModel.XGBoostParame
 
   private static final Logger LOG = Logger.getLogger(XGBoostModel.class);
 
-  private static final String PROP_VERBOSITY = H2O.OptArgs.SYSTEM_PROP_PREFIX + ".xgboost.verbosity";
+  private static final String PROP_VERBOSITY = H2O.OptArgs.SYSTEM_PROP_PREFIX + "xgboost.verbosity";
   private static final String PROP_NTHREAD = SYSTEM_PROP_PREFIX + "xgboost.nthreadMax";
 
   private XGBoostModelInfo model_info;
 
   public XGBoostModelInfo model_info() { return model_info; }
 
-  public static class XGBoostParameters extends Model.Parameters implements Model.GetNTrees, PlattScalingHelper.ParamsWithCalibration {
+  public static class XGBoostParameters extends Model.Parameters implements Model.GetNTrees, CalibrationHelper.ParamsWithCalibration {
     public enum TreeMethod {
       auto, exact, approx, hist
     }
@@ -69,6 +66,12 @@ public class XGBoostModel extends Model<XGBoostModel, XGBoostModel.XGBoostParame
     }
     public enum Backend {
       auto, gpu, cpu
+    }
+    public enum FeatureSelector {
+      cyclic, shuffle, random, greedy, thrifty
+    }
+    public enum Updater {
+      gpu_hist, shotgun, coord_descent, gpu_coord_descent,
     }
 
     // H2O GBM options
@@ -130,9 +133,10 @@ public class XGBoostModel extends Model<XGBoostModel, XGBoostModel.XGBoostParame
     public float _reg_alpha = 0;
     public float _scale_pos_weight = 1;
 
-    // Platt scaling
+    // Platt scaling (by default)
     public boolean _calibrate_model;
     public Key<Frame> _calibration_frame;
+    public CalibrationHelper.CalibrationMethod _calibration_method = CalibrationHelper.CalibrationMethod.AUTO;
 
     // Dart specific (booster == dart)
     public DartSampleType _sample_type = DartSampleType.uniform;
@@ -142,6 +146,15 @@ public class XGBoostModel extends Model<XGBoostModel, XGBoostModel.XGBoostParame
     public float _skip_drop = 0;
     public int[] _gpu_id; // which GPU to use
     public Backend _backend = Backend.auto;
+
+    // GBLiner specific (booster == gblinear)
+    // lambda, alpha support also for gbtree
+    public FeatureSelector _feature_selector = FeatureSelector.cyclic;
+    public int _top_k;
+    public Updater _updater;
+
+    public String _eval_metric;
+    public boolean _score_eval_metric_only;
 
     public String algoName() { return "XGBoost"; }
     public String fullName() { return "XGBoost"; }
@@ -205,6 +218,16 @@ public class XGBoostModel extends Model<XGBoostModel, XGBoostModel.XGBoostParame
     }
 
     @Override
+    public CalibrationHelper.CalibrationMethod getCalibrationMethod() {
+      return _calibration_method;
+    }
+
+    @Override
+    public void setCalibrationMethod(CalibrationHelper.CalibrationMethod calibrationMethod) {
+      _calibration_method = calibrationMethod;
+    }
+
+    @Override
     public Parameters getParams() {
       return this;
     }
@@ -227,7 +250,7 @@ public class XGBoostModel extends Model<XGBoostModel, XGBoostModel.XGBoostParame
 
   public XGBoostModel(Key<XGBoostModel> selfKey, XGBoostParameters parms, XGBoostOutput output, Frame train, Frame valid) {
     super(selfKey,parms,output);
-    final DataInfo dinfo = makeDataInfo(train, valid, _parms, output.nclasses());
+    final DataInfo dinfo = makeDataInfo(train, valid, _parms);
     DKV.put(dinfo);
     setDataInfoToOutput(dinfo);
     model_info = new XGBoostModelInfo(parms, dinfo);
@@ -239,6 +262,7 @@ public class XGBoostModel extends Model<XGBoostModel, XGBoostModel.XGBoostParame
     EffectiveParametersUtils.initFoldAssignment(_parms);
     _parms._backend = getActualBackend(_parms, true);
     _parms._tree_method = getActualTreeMethod(_parms);
+    EffectiveParametersUtils.initCalibrationMethod(_parms);
   }
 
   public static XGBoostParameters.TreeMethod getActualTreeMethod(XGBoostParameters p) {
@@ -366,6 +390,10 @@ public class XGBoostModel extends Model<XGBoostModel, XGBoostModel.XGBoostParame
       params.put("one_drop", p._one_drop ? "1" : "0");
       params.put("skip_drop", p._skip_drop);
     }
+    if (p._booster == XGBoostParameters.Booster.gblinear) {
+      params.put("feature_selector", p._feature_selector.toString());
+      params.put("top_k", p._top_k);
+    }
     XGBoostParameters.Backend actualBackend = getActualBackend(p, true);
     XGBoostParameters.TreeMethod actualTreeMethod = getActualTreeMethod(p);
     if (actualBackend == XGBoostParameters.Backend.gpu) {
@@ -375,17 +403,17 @@ public class XGBoostModel extends Model<XGBoostModel, XGBoostModel.XGBoostParame
         params.put("gpu_id", 0);
       }
       // we are setting updater rather than tree_method here to keep CPU predictor, which is faster
-      if (p._booster == XGBoostParameters.Booster.gblinear) {
+      if (p._booster == XGBoostParameters.Booster.gblinear && p._updater == null) {
         LOG.info("Using gpu_coord_descent updater."); 
-        params.put("updater", "gpu_coord_descent");
+        params.put("updater", XGBoostParameters.Updater.gpu_coord_descent.toString());
       } else {
         LOG.info("Using gpu_hist tree method.");
         params.put("max_bin", p._max_bins);
-        params.put("updater", "grow_gpu_hist");
+        params.put("tree_method", XGBoostParameters.Updater.gpu_hist.toString());
       }
-    } else if (p._booster == XGBoostParameters.Booster.gblinear) {
+    } else if (p._booster == XGBoostParameters.Booster.gblinear && p._updater == null) {
       LOG.info("Using coord_descent updater.");
-      params.put("updater", "coord_descent");
+      params.put("updater", XGBoostParameters.Updater.coord_descent.toString());
     } else if (H2O.CLOUD.size() > 1 && p._tree_method == XGBoostParameters.TreeMethod.auto &&
         p._monotone_constraints != null) {
       LOG.info("Using hist tree method for distributed computation with monotone_constraints.");
@@ -397,6 +425,10 @@ public class XGBoostModel extends Model<XGBoostModel, XGBoostModel.XGBoostParame
       if (p._tree_method == XGBoostParameters.TreeMethod.hist) {
         params.put("max_bin", p._max_bins);
       }
+    }
+    if (p._updater != null) {
+      LOG.info("Using user-provided updater.");
+      params.put("updater", p._updater.toString());
     }
     if (p._min_child_weight != 1) {
       LOG.info("Using user-provided parameter min_child_weight instead of min_rows.");
@@ -420,6 +452,7 @@ public class XGBoostModel extends Model<XGBoostModel, XGBoostModel.XGBoostParame
     if (p._scale_pos_weight != 1)
       params.put("scale_pos_weight", p._scale_pos_weight);
 
+    // objective function
     if (nClasses==2) {
       params.put("objective", ObjectiveType.BINARY_LOGISTIC.getId());
     } else if (nClasses==1) {
@@ -440,6 +473,11 @@ public class XGBoostModel extends Model<XGBoostModel, XGBoostModel.XGBoostParame
       params.put("num_class", nClasses);
     }
     assert ObjectiveType.fromXGBoost((String) params.get("objective")) != null;
+
+    // evaluation metric
+    if (p._eval_metric != null) {
+      params.put("eval_metric", p._eval_metric);
+    }
 
     final int nthreadMax = getMaxNThread();
     final int nthread = p._nthread != -1 ? Math.min(p._nthread, nthreadMax) : nthreadMax;
@@ -582,32 +620,35 @@ public class XGBoostModel extends Model<XGBoostModel, XGBoostModel.XGBoostParame
 
   private ModelMetrics makeMetrics(Frame data, Frame originalData, boolean isTrain, String description) {
     LOG.debug("Making metrics: " + description);
-    return new XGBoostModelMetrics(_output, data, originalData, isTrain, this).compute();
+    return new XGBoostModelMetrics(_output, data, originalData, isTrain, this, CFuncRef.from(_parms._custom_metric_func)).compute();
   }
 
-  /**
-   * Score an XGBoost model on training and validation data (optional)
-   * Note: every row is scored, all observation weights are assumed to be equal
-   * @param _train training data in the form of matrix
-   * @param _valid validation data (optional, can be null)
-   */
-  final void doScoring(Frame _train, Frame _trainOrig, Frame _valid, Frame _validOrig) {
-    ModelMetrics mm = makeMetrics(_train, _trainOrig, true, "Metrics reported on training frame");
+  final void doScoring(Frame train, Frame trainOrig, CustomMetric trainCustomMetric,
+                       Frame valid, Frame validOrig, CustomMetric validCustomMetric) {
+    ModelMetrics mm = makeMetrics(train, trainOrig, true, "Metrics reported on training frame");
     _output._training_metrics = mm;
-    _output._scored_train[_output._ntrees].fillFrom(mm);
+    if (trainCustomMetric == null) {
+      _output._scored_train[_output._ntrees].fillFrom(mm, mm._custom_metric);
+    } else {
+      _output._scored_train[_output._ntrees].fillFrom(mm, trainCustomMetric);
+    }
     addModelMetrics(mm);
     // Optional validation part
-    if (_valid!=null) {
-      mm = makeMetrics(_valid, _validOrig, false, "Metrics reported on validation frame");
+    if (valid != null) {
+      mm = makeMetrics(valid, validOrig, false, "Metrics reported on validation frame");
       _output._validation_metrics = mm;
-      _output._scored_valid[_output._ntrees].fillFrom(mm);
+      if (validCustomMetric == null) {
+        _output._scored_valid[_output._ntrees].fillFrom(mm, mm._custom_metric);
+      } else {
+        _output._scored_valid[_output._ntrees].fillFrom(mm, validCustomMetric);
+      }
       addModelMetrics(mm);
     }
   }
 
   @Override
   protected Frame postProcessPredictions(Frame adaptedFrame, Frame predictFr, Job j) {
-    return PlattScalingHelper.postProcessPredictions(predictFr, j, _output);
+    return CalibrationHelper.postProcessPredictions(predictFr, j, _output);
   }
 
   @Override
@@ -700,6 +741,37 @@ public class XGBoostModel extends Model<XGBoostModel, XGBoostModel.XGBoostParame
             .outputFrame(destination_key, outputNames, null);
   }
 
+
+  @Override
+  public Frame scoreContributions(Frame frame, Key<Frame> destination_key, Job<Frame> j, ContributionsOptions options, Frame backgroundFrame) {
+    Log.info("Starting contributions calculation for " + this._key + "...");
+    try (Scope.Safe s = Scope.safe(frame, backgroundFrame)) {
+      Frame contributions;
+      if (null == backgroundFrame) {
+        contributions = scoreContributions(frame, destination_key, j, options);
+      } else {
+        Frame adaptedFrame = adaptFrameForScore(frame, false);
+        DKV.put(adaptedFrame);
+        Frame adaptedBgFrame = adaptFrameForScore(backgroundFrame, false);
+        DKV.put(adaptedBgFrame);
+
+        DataInfo di = model_info().dataInfo();
+        assert di != null;
+        final String[] featureContribNames = ContributionsOutputFormat.Compact.equals(options._outputFormat) ?
+                _output.features() : di.coefNames();
+        final String[] outputNames = ArrayUtils.append(featureContribNames, "BiasTerm");
+
+
+        contributions = new PredictTreeSHAPWithBackgroundTask(di, model_info(), _output, options,
+                adaptedFrame, adaptedBgFrame, options._outputPerReference, options._outputSpace)
+                .runAndGetOutput(j, destination_key, outputNames);
+      }
+      return Scope.untrack(contributions);
+    } finally {
+      Log.info("Finished contributions calculation for " + this._key + "...");
+    }
+  }
+  
   @Override
   public UpdateAuxTreeWeightsReport updateAuxTreeWeights(Frame frame, String weightsColumn) {
     if (weightsColumn == null) {
@@ -944,8 +1016,40 @@ public class XGBoostModel extends Model<XGBoostModel, XGBoostModel.XGBoostParame
   Predictor makePredictor(boolean scoringOnly) {
     return PredictorFactory.makePredictor(model_info._boosterBytes, model_info.auxNodeWeightBytes(), scoringOnly);
   }
+
+  protected Frame removeSpecialNNonNumericColumns(Frame frame) {
+    Frame adaptFrm = new Frame(frame);
+    adaptTestForTrain(adaptFrm, true, false);
+    // remove non-feature columns
+    adaptFrm.remove(_parms._response_column);
+    adaptFrm.remove(_parms._fold_column);
+    adaptFrm.remove(_parms._weights_column);
+    adaptFrm.remove(_parms._offset_column);
+    // remove non-numeric columns
+    int numCols = adaptFrm.numCols()-1;
+    for (int index=numCols; index>=0; index--) {
+      if (!adaptFrm.vec(index).isNumeric())
+        adaptFrm.remove(index);
+    }
+    return adaptFrm;
+  }
+  
   @Override
   public double getFriedmanPopescusH(Frame frame, String[] vars) {
+    Frame adaptFrm = removeSpecialNNonNumericColumns(frame);
+
+    for(int colId = 0; colId < adaptFrm.numCols(); colId++) {
+      Vec col = adaptFrm.vec(colId);
+      if (col.isBad()) {
+        throw new UnsupportedOperationException(
+                "Calculating of H statistics error: column " + adaptFrm.name(colId) + " is missing.");
+      }
+      if(!col.isNumeric()) {
+        throw new UnsupportedOperationException(
+                "Calculating of H statistics error: column " + adaptFrm.name(colId) + " is not numeric.");
+      }
+    }
+
     int nclasses = this._output.nclasses() > 2 ? this._output.nclasses() : 1;
     SharedTreeSubgraph[][] sharedTreeSubgraphs = new SharedTreeSubgraph[this._parms._ntrees][nclasses];
     for (int i = 0; i < this._parms._ntrees; i++) {
@@ -956,7 +1060,7 @@ public class XGBoostModel extends Model<XGBoostModel, XGBoostModel.XGBoostParame
       }
     }
 
-    return FriedmanPopescusH.h(frame, vars, this._parms._learn_rate, sharedTreeSubgraphs);
+    return FriedmanPopescusH.h(adaptFrm, vars, this._parms._learn_rate, sharedTreeSubgraphs);
   }
 
 

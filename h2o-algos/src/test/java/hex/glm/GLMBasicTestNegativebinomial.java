@@ -5,21 +5,22 @@ import hex.DataInfo;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.runner.RunWith;
 import water.*;
 import water.fvec.Frame;
 import water.fvec.Vec;
 import hex.glm.GLMModel.GLMWeightsFun;
+import water.runner.CloudSize;
+import water.runner.H2ORunner;
 
 import java.util.Random;
 
 import static org.junit.Assert.assertTrue;
+import static water.TestUtil.parseTestFile;
 
-public class GLMBasicTestNegativebinomial extends TestUtil {
-
-  @BeforeClass
-  public static void setup() {
-    stall_till_cloudsize(1);
-  }
+@RunWith(H2ORunner.class)
+@CloudSize(1)
+public class GLMBasicTestNegativebinomial {
 
   // test and compare mojo/pojo/predict values
   @Test
@@ -47,7 +48,7 @@ public class GLMBasicTestNegativebinomial extends TestUtil {
       GLM glm = new GLM( params);
       model = glm.trainModel().get();
       pred = model.score(tfr);
-      Scope.track_generic(pred);
+      Scope.track(pred);
       Scope.track_generic(model);
       Assert.assertTrue(model.testJavaScoring(tfr, pred, 1e-6));
     } finally {
@@ -120,6 +121,27 @@ public class GLMBasicTestNegativebinomial extends TestUtil {
       Scope.exit();
       DKV.remove(dinfo._key);
       if (dinfo != null) dinfo.remove();
+    }
+  }
+  
+  @Test
+  public void testNegativeBinomialDispersionEstimationLeakCheck() {
+    Scope.enter();
+    try {
+      Frame trainData = parseTestFile("smalldata/prostate/prostate.csv");
+      Scope.track(trainData);
+      final GLMModel.GLMParameters parms = new GLMModel.GLMParameters();
+      parms._train = trainData._key;
+      parms._family = GLMModel.GLMParameters.Family.negativebinomial;
+      parms._response_column = "CAPSULE";
+      parms._compute_p_values = true;
+      parms._remove_collinear_columns = true;
+      parms._dispersion_parameter_method = GLMModel.GLMParameters.DispersionMethod.ml;
+      final GLMModel model = new GLM(parms).trainModel().get();
+      Scope.track_generic(model);
+
+    } finally {
+      Scope.exit();
     }
   }
   

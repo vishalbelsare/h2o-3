@@ -64,48 +64,6 @@ if (!missing(metalearner_params)) {
                "Try increasing max_runtime_secs or setting it to 0 (unlimited)."))
   }
 
-  .get_algorithm <- function(model_id) {
-    known_algos <- c("deeplearning", "drf", "glm", "gam", "gbm", "naivebayes", "stackedensemble", "rulefit", "xgboost", "xrt")
-    algorithm <- sub("^(DeepLearning|DRF|GAM|GBM|GLM|NaiveBayes|StackedEnsemble|RuleFit|XGBoost|XRT)_.*",
-                     "\\\\L\\\\1", model_id, perl = TRUE)
-    if (algorithm == "xrt")
-      algorithm <- "drf"
-    if (algorithm %in% known_algos) {
-      return(algorithm)
-    }
-    return(h2o.getModel(model_id)@algorithm)
-  }
-
-  model$model_summary <- capture.output({
-    print_ln <- function(...) cat(..., sep = "\\n")
-
-    print_ln(paste0("Number of Base Models: ", length(model$base_models)))
-    print_ln("\\nBase Models (count by algorithm type):")
-    print(table(unlist(lapply(model$base_models, .get_algorithm))))
-
-    print_ln("\\nMetalearner:\\n")
-    print_ln(paste0(
-      "Metalearner algorithm: ",
-      ifelse(length(allparams$metalearner_algorithm) > 1, "glm", allparams$metalearner_algorithm)))
-
-    if (allparams$metalearner_nfolds != 0) {
-      print_ln("Metalearner cross-validation fold assignment:")
-      print_ln(paste0(
-         "  Fold assignment scheme: ",
-         ifelse(length(allparams$metalearner_fold_assignment) > 1, "Random",
-                ifelse(is.null(allparams$metalearner_fold_assignment),"AUTO",
-                       allparams$metalearner_fold_assignment))))
-
-      print_ln(paste0("  Number of folds: ", allparams$metalearner_nfolds))
-      print_ln(paste0(
-        "  Fold column: ",
-        ifelse(is.null(allparams$metalearner_fold_column), "NULL", allparams$metalearner_fold_column)))
-    }
-
-    print_ln(paste0("Metalearner hyperparameters: ", allparams$metalearner_params))
-  })
-
-  class(model$model_summary) <- "h2o.stackedEnsemble.summary"
   return(model)
 }
 """
@@ -132,8 +90,12 @@ library(h2o)
 h2o.init()
 
 # Import a sample binary outcome train/test set
-train <- h2o.importFile("https://s3.amazonaws.com/erin-data/higgs/higgs_train_10k.csv")
-test <- h2o.importFile("https://s3.amazonaws.com/erin-data/higgs/higgs_test_5k.csv")
+train <- h2o.importFile(
+    "https://s3.amazonaws.com/h2o-public-test-data/smalldata/higgs/higgs_train_10k.csv"
+    )
+test <- h2o.importFile(
+    "https://s3.amazonaws.com/h2o-public-test-data/smalldata/higgs/higgs_test_5k.csv"
+    )
 
 # Identify predictors and response
 y <- "response"

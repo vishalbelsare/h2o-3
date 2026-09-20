@@ -1,34 +1,44 @@
 package water;
 
+import Jama.Matrix;
 import hex.CreateFrame;
 import hex.Model;
 import hex.SplitFrame;
-import hex.genmodel.*;
+import hex.genmodel.GenModel;
+import hex.genmodel.ModelMojoReader;
+import hex.genmodel.MojoReaderBackend;
+import hex.genmodel.MojoReaderBackendFactory;
 import hex.genmodel.easy.RowData;
 import org.junit.AfterClass;
 import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.rules.TestRule;
+import org.junit.rules.Timeout;
 import org.junit.runner.Description;
 import org.junit.runners.model.Statement;
 import water.api.StreamingSchema;
 import water.fvec.*;
 import water.init.NetworkInit;
+import water.junit.Priority;
+import water.junit.TestTimeout;
+import water.junit.rules.RulesPriorities;
 import water.parser.BufferedString;
 import water.parser.DefaultParserProviders;
 import water.parser.ParseDataset;
 import water.parser.ParseSetup;
-import water.util.*;
 import water.util.Timer;
+import water.util.*;
 import water.util.fp.Function;
 
 import java.io.*;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.net.URL;
+import java.net.URLConnection;
 import java.util.*;
 
 import static org.junit.Assert.*;
+import static water.util.ArrayUtils.gaussianVector;
 
 @Ignore("Support for tests, but no actual tests here")
 public class TestUtil extends Iced {
@@ -45,7 +55,7 @@ public class TestUtil extends Iced {
   /**
    * Minimal cloud size to start test.
    */
-  protected static int MINCLOUDSIZE = Integer.parseInt(System.getProperty("cloudSize", "1"));
+  public static int MINCLOUDSIZE = Integer.parseInt(System.getProperty("cloudSize", "1"));
   /**
    * Default time in ms to wait for clouding
    */
@@ -186,6 +196,30 @@ public class TestUtil extends Iced {
     new KeyCleaner(objectType).doAllNodes();
   }
 
+  public static double[][] genRandomMatrix(int row, int col, long seedValue) {
+    double[][] randomMat = new double[row][];
+    Random random = new Random(seedValue);
+    for (int rInd = 0; rInd < row; rInd++)
+      randomMat[rInd] = gaussianVector(col, random);
+    return randomMat;
+  }
+
+  public static double[][] genSymPsdMatrix(int matSize, long seedValue, int multiplier) {
+    double[][] mat = genRandomMatrix(matSize, matSize, seedValue);
+    // generate symmetric matrix
+    Matrix matT = new Matrix(mat);
+    Matrix symMat = matT.plus(matT.transpose()).times(0.5);
+    for (int index=0; index<matSize; index++) {
+      symMat.set(index, index, Math.abs(genRandomMatrix(1,1,123)[0][0])*multiplier);
+    }
+    return symMat.getArray();
+  }
+
+  public static double[] genRandomArray(int length, long seedValue) {
+    Random random = new Random(seedValue);
+    return gaussianVector(length, random);
+  }
+
   public static void checkArrays(double[] expected, double[] actual, double threshold) {
     for (int i = 0; i < actual.length; i++) {
       if (!Double.isNaN(expected[i]) && !Double.isNaN(actual[i])) // only compare when both are not NaN
@@ -202,6 +236,25 @@ public class TestUtil extends Iced {
       checkArrays(expected[ind], actual[ind], threshold);
     }
   }
+  
+  public static void check3DArrays(double[][][] expected, double[][][] actual, double threshold) {
+    int len = expected.length;
+    assertEquals(len, actual.length);
+    for (int ind=0; ind < len; ind++) {
+      checkDoubleArrays(expected[ind], actual[ind], threshold);
+    }
+  }
+  
+  public static void checkIntArrays(int[][] expected, int[][] actual) {
+    int len1 = expected.length;
+    assertEquals(len1, actual.length);
+
+    for (int ind = 0; ind < len1; ind++) {
+      assertEquals(expected[ind].length, actual[ind].length);
+      Arrays.equals(expected[ind], actual[ind]);
+    }
+  }
+  
 
   /**
    * @deprecated use {@link #generateEnumOnly(int, int, int, double)} instead
@@ -237,7 +290,7 @@ public class TestUtil extends Iced {
     return generateEnumOnly(numCols, numRows, num_factor, missingfrac, seed);
   }
 
-  protected static Frame generateEnumOnly(int numCols, int numRows, int num_factor, double missingfrac, long seed) {
+  public static Frame generateEnumOnly(int numCols, int numRows, int num_factor, double missingfrac, long seed) {
     CreateFrame cf = new CreateFrame();
     cf.rows = numRows;
     cf.cols = numCols;
@@ -279,6 +332,10 @@ public class TestUtil extends Iced {
   }
 
   protected static Frame generateRealOnly(int numCols, int numRows, double missingfrac, long seed) {
+     return generateRealWithRangeOnly(numCols, numRows, missingfrac, seed, 100);
+  }
+
+  protected static Frame generateRealWithRangeOnly(int numCols, int numRows, double missingfrac, long seed, long range) {
     CreateFrame cf = new CreateFrame();
     cf.rows = numRows;
     cf.cols = numCols;
@@ -289,8 +346,10 @@ public class TestUtil extends Iced {
     cf.string_fraction = 0;
     cf.has_response = false;
     cf.missing_fraction = missingfrac;
+    cf.real_range = range;
     cf.seed = seed;
-    System.out.println("Createframe parameters: rows: " + numRows + " cols:" + numCols + " seed: " + cf.seed);
+    System.out.println("Createframe parameters: rows: " + numRows + " cols:" + numCols + " seed: " + cf.seed + 
+            " range: "+range);
     return cf.execImpl().get();
   }
 
@@ -356,7 +415,7 @@ public class TestUtil extends Iced {
     return sortDir;
   }
 
-  private static class DKVCleaner extends MRTask<DKVCleaner> {
+  public static class DKVCleaner extends MRTask<DKVCleaner> {
     @Override
     public void setupLocal() {
       H2O.raw_clear();
@@ -366,6 +425,39 @@ public class TestUtil extends Iced {
 
   // current running test - assumes no test parallelism just like the rest of this class
   public static Description CURRENT_TEST_DESCRIPTION;
+
+  /**
+   * Default per-test timeout in seconds.
+   */
+  public static final int DEFAULT_TEST_TIMEOUT_SECONDS = 600;
+
+  /**
+   * Per-test timeout. Any single test exceeding this limit fails with TestTimedOutException instead
+   * of hanging the whole JVM (which was previously killing entire Jenkins stages with SIGTERM).
+   * Configurable via -Dtest.timeout.seconds=N; defaults to {@link #DEFAULT_TEST_TIMEOUT_SECONDS}.
+   *
+   * Individual long-running tests can opt out of the default with {@link TestTimeout}, which takes
+   * precedence over the system property.
+   */
+  @Rule
+  transient public TestRule globalTimeout = new TestRule() {
+
+    @Override
+    public Statement apply(Statement base, Description description) {
+      return Timeout.seconds(timeoutSeconds(description)).apply(base, description);
+    }
+
+    private long timeoutSeconds(Description description) {
+      TestTimeout override = description.getAnnotation(TestTimeout.class);
+      if (override == null && description.getTestClass() != null) {
+        override = description.getTestClass().getAnnotation(TestTimeout.class);
+      }
+      return override != null
+          ? override.seconds()
+          : Long.parseLong(System.getProperty("test.timeout.seconds",
+              String.valueOf(DEFAULT_TEST_TIMEOUT_SECONDS)));
+    }
+  };
 
   /**
    * Execute this rule before each test to print test name and test class
@@ -384,9 +476,9 @@ public class TestUtil extends Iced {
     }
   };
 
-  /* Ignore tests specified in the ignore.tests system property */
+  /* Ignore tests specified in the ignore.tests system property: applied last, if test is ignored, no other rule with be evaluated */
   @Rule
-  transient public TestRule runRule = new TestRule() {
+  transient public TestRule runRule = new @Priority(RulesPriorities.RUN_TEST) TestRule() {
     @Override
     public Statement apply(Statement base, Description description) {
       String testName = description.getClassName() + "#" + description.getMethodName();
@@ -432,7 +524,6 @@ public class TestUtil extends Iced {
     class TimerStatement extends Statement {
       private final Statement _base;
       private final String _tname;
-      Throwable _ex;
 
       public TimerStatement(Statement base, String tname) {
         _base = base;
@@ -444,11 +535,8 @@ public class TestUtil extends Iced {
         Timer t = new Timer();
         try {
           _base.evaluate();
-        } catch (Throwable ex) {
-          _ex = ex;
-          throw _ex;
         } finally {
-          Log.info("#### TEST " + _tname + " EXECUTION TIME: " + t.toString());
+          Log.info("#### TEST " + _tname + " EXECUTION TIME: " + t);
         }
       }
     }
@@ -610,37 +698,68 @@ public class TestUtil extends Iced {
     return frame;
   }
 
+  public static void assertExists(String fname) {
+    NFSFileVec v = makeNfsFileVec(fname);
+    assertNotNull("File '" + fname + "' was not found", v);
+    v.remove();
+  }
+  
   public static NFSFileVec makeNfsFileVec(String fname) {
     try {
-      if (runWithoutLocalFiles()) {
-        downloadTestFileFromS3(fname);
+      File file = FileUtils.locateFile(fname);
+      if ((file == null) && (isCI() || runWithoutLocalFiles())) {
+        long lastModified = downloadTestFileFromS3(fname);
+        if (lastModified != 0 && isCI()) { // in CI fail if the file is missing for more than 30 days
+          if (System.currentTimeMillis() - lastModified > 30 * 24 * 60 * 60 * 1000L) {
+            throw new IllegalStateException(
+                    "File '" + fname + "' is still not locally synchronized (more than 30 days). Talk to #devops-requests");
+          }
+        }
       }
       return NFSFileVec.make(fname);
     } catch (IOException ioe) {
+      Log.err(ioe);
       fail(ioe.getMessage());
       return null;
     }
   }
 
   private static boolean runWithoutLocalFiles() {
-    return Boolean.valueOf(System.getenv("H2O_JUNIT_ALLOW_NO_SMALLDATA"));
+    return Boolean.parseBoolean(System.getenv("H2O_JUNIT_ALLOW_NO_SMALLDATA"));
   }
 
-  protected static void downloadTestFileFromS3(String fname) throws IOException {
+  private static File getLocalSmalldataFile(final String fname) {
+    String projectDir = System.getenv("H2O_PROJECT_DIR");
+    return projectDir != null ? new File(projectDir, fname) : new File(fname);
+  }
+  
+  protected static long downloadTestFileFromS3(String fname) throws IOException {
     if (fname.startsWith("./"))
       fname = fname.substring(2);
-    File f = new File(fname);
+    final File f = getLocalSmalldataFile(fname);
     if (!f.exists()) {
-      if (f.getParentFile() != null)
-        f.getParentFile().mkdirs();
+      if (f.getParentFile() != null) {
+        boolean dirsCreated = f.getParentFile().mkdirs();
+        if (! dirsCreated) {
+          Log.warn("Failed to create directory:" + f.getParentFile());
+        }
+      }
       File tmpFile = File.createTempFile(f.getName(), "tmp", f.getParentFile());
-      org.apache.commons.io.FileUtils.copyURLToFile(
-              new URL("https://h2o-public-test-data.s3.amazonaws.com/" + fname),
-              tmpFile, 1000, 2000);
-      if (!tmpFile.renameTo(f)) {
+      final URL source = new URL("https://h2o-public-test-data.s3.amazonaws.com/" + fname);
+      final URLConnection connection = source.openConnection();
+      connection.setConnectTimeout(1000);
+      connection.setReadTimeout(2000);
+      final long lastModified = connection.getLastModified();
+      try (final InputStream stream = connection.getInputStream()) {
+        org.apache.commons.io.FileUtils.copyInputStreamToFile(stream, tmpFile);
+      }
+      if (tmpFile.renameTo(f)) {
+        return lastModified;
+      } else {
         Log.warn("Couldn't download " + fname + " from S3.");
       }
     }
+    return 0;
   }
 
   /**
@@ -770,6 +889,20 @@ public class TestUtil extends Iced {
     return ParseDataset.parse(outputKey, new Key[]{nfs._key}, true, guessedSetup);
   }
 
+  public static Frame parseTestFile(Key outputKey, String fname, ParseSetupTransformer transformer, 
+                                    int[] skippedColumns, int psetup) {
+    NFSFileVec nfs = makeNfsFileVec(fname);
+    ParseSetup guessedSetup = ParseSetup.guessSetup(new Key[]{nfs._key}, false, psetup);
+    if (skippedColumns != null) {
+      guessedSetup.setSkippedColumns(skippedColumns);
+      guessedSetup.setParseColumnIndices(guessedSetup.getNumberColumns(), skippedColumns);
+    }
+
+    if (transformer != null)
+      guessedSetup = transformer.transformSetup(guessedSetup);
+    return ParseDataset.parse(outputKey, new Key[]{nfs._key}, true, guessedSetup);
+  }
+
   /**
    * @deprecated use {@link #parseTestFile(String fname, String na_string, int check_header, byte[] column_types)} instead
    * <p>
@@ -817,7 +950,7 @@ public class TestUtil extends Iced {
 
     // create new parseSetup in order to store our na_string
     ParseSetup p = ParseSetup.guessSetup(res, new ParseSetup(DefaultParserProviders.GUESS_INFO, (byte) ',', false,
-            check_header, 0, null, null, null, null, null, null, null));
+            check_header, 0, null, null, null, null, null, null, null, false));
     if (skippedColumns != null) {
       p.setSkippedColumns(skippedColumns);
       p.setParseColumnIndices(p.getNumberColumns(), skippedColumns);
@@ -846,6 +979,48 @@ public class TestUtil extends Iced {
     return ParseDataset.parse(Key.make(), res, true, p);
 
   }
+
+  public static Frame parseTestFile(String fname, String na_string, int check_header, byte[] column_types, 
+                                    ParseSetupTransformer transformer, int[] skippedColumns, boolean force_col_types) {
+    NFSFileVec nfs = makeNfsFileVec(fname);
+
+    Key[] res = {nfs._key};
+
+    // create new parseSetup in order to store our na_string
+    ParseSetup p = ParseSetup.guessSetup(res, new ParseSetup(DefaultParserProviders.GUESS_INFO, (byte) ',', false,
+            check_header, 0, null, null, null, null, null, null, null, false));
+    if (skippedColumns != null) {
+      p.setSkippedColumns(skippedColumns);
+      p.setParseColumnIndices(p.getNumberColumns(), skippedColumns);
+    }
+    
+    if (force_col_types)  // only useful for parquet parsers here
+      p.setForceColTypes(true);
+
+    // add the na_strings into p.
+    if (na_string != null) {
+      int column_number = p.getColumnTypes().length;
+      int na_length = na_string.length() - 1;
+
+      String[][] na_strings = new String[column_number][na_length + 1];
+
+      for (int index = 0; index < column_number; index++) {
+        na_strings[index][na_length] = na_string;
+      }
+
+      p.setNAStrings(na_strings);
+    }
+
+    if (column_types != null)
+      p.setColumnTypes(column_types);
+
+    if (transformer != null)
+      p = transformer.transformSetup(p);
+
+    return ParseDataset.parse(Key.make(), res, true, p);
+
+  }
+
 
   /**
    * @deprecated use {@link #parseTestFolder(String)} instead
@@ -953,7 +1128,7 @@ public class TestUtil extends Iced {
 
     // create new parseSetup in order to store our na_string
     ParseSetup p = ParseSetup.guessSetup(res, new ParseSetup(DefaultParserProviders.GUESS_INFO, (byte) ',', true,
-            check_header, 0, null, null, null, null, null, null, null));
+            check_header, 0, null, null, null, null, null, null, null, false));
     if (skipped_columns != null) {
       p.setSkippedColumns(skipped_columns);
       p.setParseColumnIndices(p.getNumberColumns(), skipped_columns);
@@ -1319,6 +1494,24 @@ public class TestUtil extends Iced {
     }
   }
 
+  public static void assertTwoDimTableEquals(TwoDimTable expected, TwoDimTable actual, int[] ignoredColumnsIdxs) {
+    assertEquals("tableHeader different", expected.getTableHeader(), actual.getTableHeader());
+    assertEquals("tableDescriptionDifferent", expected.getTableDescription(), actual.getTableDescription());
+    assertArrayEquals("rowHeaders different", expected.getRowHeaders(), actual.getRowHeaders());
+    assertArrayEquals("colHeaders different", expected.getColHeaders(), actual.getColHeaders());
+    assertArrayEquals("colTypes different", expected.getColTypes(), actual.getColTypes());
+    assertArrayEquals("colFormats different", expected.getColFormats(), actual.getColFormats());
+    assertEquals("colHeaderForRowHeaders different", expected.getColHeaderForRowHeaders(), actual.getColHeaderForRowHeaders());
+    for (int c = 0; c < expected.getColDim(); c++) {
+      if (ArrayUtils.find(ignoredColumnsIdxs, c) != -1) continue;
+      for (int r = 0; r < expected.getRowDim(); r++) {
+        Object ex = expected.get(r, c);
+        Object act = actual.get(r, c);
+        assertEquals("cellValues different at row " + r + ", col " + c, ex, act);
+      }
+    }
+  }
+
   public static void checkStddev(double[] expected, double[] actual, double threshold) {
     for (int i = 0; i < actual.length; i++)
       assertEquals(expected[i], actual[i], threshold);
@@ -1362,7 +1555,8 @@ public class TestUtil extends Iced {
   public static boolean equalTwoArrays(double[] array1, double[] array2, double tol) {
     assert array1.length == array2.length : "Arrays have different lengths";
     for (int index = 0; index < array1.length; index++) {
-      if (Math.abs(array1[index] - array2[index]) > tol)
+      double diff = Math.abs(array1[index] - array2[index])/Math.max(Math.abs(array1[index]), Math.abs(array2[index]));
+      if (diff > tol)
         return false;
     }
     return true;
@@ -1905,6 +2099,28 @@ public class TestUtil extends Iced {
     final Random random = RandomUtils.getRNG(randomSeed);
     for (int i = 0; i < vec.length(); i++) {
       vec.set(i, random.nextInt(domain.length));
+    }
+    return vec;
+  }
+
+
+  /**
+   * @param len Length of the resulting vector
+   * @param type Type of column. Possible options are Vec.T_NUM, Vec.T_STR, Vec.T_UUID
+   * @return id column vec
+   */
+  public static Vec createIdVec(final long len,  byte type) {
+    assert type == Vec.T_UUID || type == Vec.T_STR || type == Vec.T_NUM: "Unsupported type for id vec creation: "+type;
+    final Vec vec = Vec.makeZero(len, type);
+    for (int i = 0; i < vec.length(); i++) {
+      switch (type) {
+        case Vec.T_STR:
+          vec.set(i, String.valueOf(i));
+        case Vec.T_UUID:   
+          vec.set(i, UUID.fromString(String.valueOf(i)));
+        default:
+          vec.set(i, i);
+      }
     }
     return vec;
   }

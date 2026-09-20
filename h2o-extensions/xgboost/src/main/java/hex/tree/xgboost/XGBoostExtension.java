@@ -28,6 +28,7 @@ public class XGBoostExtension extends AbstractH2OExtension {
                   + "  - CUDA 8.0\n"
                   + "XGboost (minimal version) needs: \n"
                   + "  - GCC 4.7+\n"
+                  + "Apple silicon is not supported yet\n"
                   + "For more details, run in debug mode: `java -Dlog4j.configuration=file:///tmp/log4j.properties -jar h2o.jar`\n";
 
   // XGBoost initialization sequence was called flag
@@ -58,6 +59,10 @@ public class XGBoostExtension extends AbstractH2OExtension {
   }
 
   public void logNativeLibInfo() {
+    if (nativeLibInfo == null) {
+      LOG.warn("No native XGBoost library found.");
+      return;
+    }
     LOG.info("Found XGBoost backend with library: " + nativeLibInfo.name);
     if (nativeLibInfo.flags.length == 0) {
       LOG.warn("Your system supports only minimal version of XGBoost (no GPUs, no multithreading)!");
@@ -100,6 +105,7 @@ public class XGBoostExtension extends AbstractH2OExtension {
       return true;
     } catch (IOException e) {
       // Ups no lib loaded or load failed
+      LOG.debug("Cause of the xgboost unsuccessful load", e);
       LOG.warn("Cannot initialize XGBoost backend! " + XGBOOST_MIN_REQUIREMENTS);
       return false;
     }

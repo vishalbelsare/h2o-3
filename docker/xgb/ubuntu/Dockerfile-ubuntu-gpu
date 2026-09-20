@@ -6,8 +6,7 @@ ARG FROM_IMAGE
 MAINTAINER h2oai "h2o.ai"
 
 ARG H2O_BRANCH='master'
-ENV JENKINS_UID='2117'
-ENV JENKINS_GID='2117'
+RUN export JENKINS_UID=$(id -u jenkins) && export JENKINS_GID=$(id -g jenkins)
 
 COPY xgb/ubuntu/common/sbin xgb/common/sbin xgb/ubuntu/omp/sbin /usr/sbin/
 
@@ -27,10 +26,18 @@ ENV JAVA_VERSION '8'
 ENV JAVA_HOME /usr/lib/jvm/java-8-oracle
 ENV PATH ${JAVA_HOME}/bin:${PATH}
 
+# Install Python 3.7
+COPY xgb_build/scripts/install_python_version_ubuntu /usr/sbin/
+COPY xgb_build/scripts/install_python_source_ubuntu /usr/sbin/
 RUN \
-    chmod +x /usr/sbin/install_python && \
+    chmod a+x /usr/sbin/install_python_version_ubuntu && \
+    chmod a+x /usr/sbin/install_python_source_ubuntu && \
     sync && \
-    /usr/sbin/install_python
+    case ${FROM_IMAGE} in \
+     *16.04*) /usr/sbin/install_python_source_ubuntu 3.7.4;; \
+    *) /usr/sbin/install_python_version_ubuntu 3.7;; \
+    esac 
+
 
 RUN \
     chmod +x /usr/sbin/create_jenkins_user && \

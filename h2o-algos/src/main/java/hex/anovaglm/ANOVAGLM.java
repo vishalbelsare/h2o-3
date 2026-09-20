@@ -81,10 +81,6 @@ public class ANOVAGLM extends ModelBuilder<ANOVAGLMModel, ANOVAGLMModel.ANOVAGLM
     return false;
   }
 
-  public BuilderVisibility buildVisibility() {
-    return BuilderVisibility.Experimental;
-  }
-
   public void init(boolean expensive) {
     super.init(expensive);
     if (expensive) {
@@ -189,7 +185,7 @@ public class ANOVAGLM extends ModelBuilder<ANOVAGLMModel, ANOVAGLMModel.ANOVAGLM
 
     /***
      * This method will transform the training frame such that the constraints on the GLM parameters will be satisfied.  
-     * Refer to ANOVAGLMTutorial https://h2oai.atlassian.net/browse/PUBDEV-8088 section III.II.
+     * Refer to ANOVAGLMTutorial https://github.com/h2oai/h2o-3/issues/7561 section III.II.
      */
     void generateTransformedColumns() {
       _allTransformedColNames = flat(_transformedColNames);

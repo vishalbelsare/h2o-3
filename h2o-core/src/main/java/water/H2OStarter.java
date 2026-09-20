@@ -1,6 +1,7 @@
 package water;
 
 import water.init.NetworkInit;
+import water.telemetry.JvmTelemetry;
 import water.util.Log;
 
 import java.io.File;
@@ -21,6 +22,11 @@ public class H2OStarter {
     // Fire up the H2O Cluster
     H2O.main(args);
 
+    // Fire-and-forget JVM telemetry: one init event once the cluster locks.
+    // Only reached by real launches (java -jar / hadoop / k8s) — JUnit tests
+    // bootstrap via H2O.main() directly and never pass through here.
+    JvmTelemetry.scheduleInitEmit();
+
     if (H2O.ARGS.disable_flow) {
       Log.info("Access to H2O Flow is disabled");
     } else {
@@ -39,9 +45,13 @@ public class H2OStarter {
     if (!H2O.ARGS.disable_web) {
       Log.info("");
       String message = H2O.ARGS.disable_flow ? "Connect to H2O from your R/Python client: " : "Open H2O Flow in your web browser: ";
-      Log.info(message + H2O.getURL(NetworkInit.h2oHttpView.getScheme()));
+      message += H2O.ARGS.web_ip == null ?
+              H2O.getURL(NetworkInit.h2oHttpView.getScheme()) :
+              H2O.getURL(NetworkInit.h2oHttpView.getScheme(), H2O.ARGS.web_ip, H2O.API_PORT, H2O.ARGS.context_path);
+      Log.info(message);
       Log.info("");
     }
+    EnterpriseGate.logStartupBanner();
   }
 
   public static void start(String[] args, String relativeResourcePath) {

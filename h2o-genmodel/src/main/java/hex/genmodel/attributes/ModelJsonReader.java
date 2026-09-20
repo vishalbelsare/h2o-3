@@ -5,6 +5,7 @@ import hex.genmodel.*;
 import hex.genmodel.attributes.parameters.ColumnSpecifier;
 import hex.genmodel.attributes.parameters.KeyValue;
 import hex.genmodel.attributes.parameters.ParameterKey;
+import hex.genmodel.attributes.parameters.StringPair;
 import water.logging.Logger;
 import water.logging.LoggerFactory;
 
@@ -150,8 +151,7 @@ public class ModelJsonReader {
         Objects.requireNonNull(modelJson);
         JsonElement potentialTableJson = findInJson(modelJson, tablePath);
         if (potentialTableJson.isJsonNull()) {
-            LOG.warn(String.format("Failed to extract element '%s' MojoModel dump.",
-                    tablePath));
+            LOG.debug(String.format("Table '%s' doesn't exist in MojoModel dump.", tablePath));
             return null;
         }
         return readTableJson(potentialTableJson.getAsJsonObject());
@@ -412,11 +412,15 @@ public class ModelJsonReader {
                 convertFrom.get("key").getAsString(),
                 convertFrom.get("value").getAsDouble()
             );
+        } else if ("StringPairV3".equals(schemaName)) {
+            return new StringPair(
+                convertFrom.get("a").getAsString(),
+                convertFrom.get("b").getAsString()
+            );
         } else {
             LOG.error(String.format("Error reading MOJO JSON: Object not supported: \n %s ", convertFrom.toString()));
             return null;
         }
-
     }
 
     private static String[] convertStringJsonArray(final JsonArray jsonArray) {

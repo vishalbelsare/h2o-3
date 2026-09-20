@@ -1,8 +1,8 @@
-#'
-#' H2O Grid Support
-#'
-#' Provides a set of functions to launch a grid search and get
-#' its results.
+#
+# H2O Grid Support
+#
+# Provides a set of functions to launch a grid search and get
+# its results.
 
 #-------------------------------------
 # Grid-related functions start here :)
@@ -108,6 +108,11 @@ h2o.grid <- function(algorithm,
       dots$x <- x
     }
   }
+  if(algorithm %in% c("upliftdrf")){
+      if(is.null(dots$treatment_column)) {
+        stop("Must specify treatment column")
+      }
+  }  
   algorithm <- .h2o.unifyAlgoName(algorithm)
   model_param_names <- names(dots)
   hyper_param_names <- names(hyper_params)
@@ -255,7 +260,7 @@ h2o.getGrid <- function(grid_id, sort_by, decreasing, verbose = FALSE) {
   model_ids <- lapply(json$model_ids, function(model_id) { model_id$name })
   hyper_names <- lapply(json$hyper_names, function(name) { name })
   failed_params <- lapply(json$failed_params, function(param) {
-                          x <- if (is.null(param) || is.na(param)) NULL else param
+                          x <- if (all(is.null(param) | is.na(param))) NULL else param
                           x
                         })
   failure_details <- lapply(json$failure_details, function(msg) { msg })

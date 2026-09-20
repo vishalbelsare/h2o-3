@@ -8,6 +8,7 @@
 #` will typically never have to reason with these objects directly, as there are
 #` S3 accessor methods provided for creating new objects.
 #`
+NULL 
 
 #-----------------------------------------------------------------------------------------------------------------------
 # Class Definitions
@@ -68,25 +69,34 @@ setRefClass("H2OConnectionMutableState",
 #' @aliases H2OConnection
 #' @export
 setClass("H2OConnection",
-         representation(ip="character", port="numeric", name="character", proxy="character",
-                        https="logical", cacert="character", insecure="logical",
-                        username="character", password="character", use_spnego="logical",
-                        cookies="character",
-                        context_path="character",
-                        mutable="H2OConnectionMutableState"),
-         prototype(ip           = NA_character_,
-                   port         = NA_integer_,
-                   name         = NA_character_,
-                   proxy        = NA_character_,
-                   https        = FALSE,
-                   cacert       = NA_character_,
-                   insecure     = FALSE,
-                   username     = NA_character_,
-                   password     = NA_character_,
-                   use_spnego   = FALSE,
-                   cookies      = NA_character_,
-                   context_path = NA_character_,
-                   mutable      = new("H2OConnectionMutableState")))
+         slots = c(
+           ip = "character",
+           port = "numeric",
+           name = "character",
+           proxy = "character",
+           https = "logical",
+           cacert = "character",
+           insecure = "logical",
+           username = "character",
+           password = "character",
+           use_spnego = "logical",
+           cookies = "character",
+           context_path = "character",
+           mutable = "H2OConnectionMutableState"),
+         prototype = prototype(
+           ip = NA_character_,
+           port = NA_integer_,
+           name = NA_character_,
+           proxy = NA_character_,
+           https = FALSE,
+           cacert = NA_character_,
+           insecure = FALSE,
+           username = NA_character_,
+           password = NA_character_,
+           use_spnego = FALSE,
+           cookies = NA_character_,
+           context_path = NA_character_,
+           mutable = new("H2OConnectionMutableState")))
 
 setClassUnion("H2OConnectionOrNULL", c("H2OConnection", "NULL"))
 
@@ -132,15 +142,24 @@ setMethod("h2o.keyof", signature(object = "Keyed"), function(object) {
 #' @slot algorithm A \code{character} string specifying the algorithm that were used to fit the model.
 #' @slot parameters A \code{list} containing the parameter settings that were used to fit the model that differ from the defaults.
 #' @slot allparameters A \code{list} containg all parameters used to fit the model.
+#' @slot params A \code{list} containing default, set, and actual parameters.
 #' @slot have_pojo A \code{logical} indicating whether export to POJO is supported
 #' @slot have_mojo A \code{logical} indicating whether export to MOJO is supported
 #' @slot model A \code{list} containing the characteristics of the model returned by the algorithm.
 #' @aliases H2OModel
 #' @export
 setClass("H2OModel",
-         representation(model_id="character", algorithm="character", parameters="list", allparameters="list", have_pojo="logical", have_mojo="logical", model="list"),
-         prototype(model_id=NA_character_),
-         contains=c("Keyed","VIRTUAL"))
+         slots =  c(
+           model_id = "character",
+           algorithm = "character",
+           parameters = "list",
+           allparameters = "list",
+           params = "list",
+           have_pojo = "logical",
+           have_mojo = "logical",
+           model = "list"),
+         prototype = prototype(model_id = NA_character_),
+         contains = c("Keyed", "VIRTUAL"))
 
 # TODO: make a more model-specific constructor
 .newH2OModel <- function(Class, model_id, ...) {
@@ -256,7 +275,7 @@ setMethod("summary", "H2OModel", function(object, ...) {
   if( !is.null(tm$Gini)                                            )  cat("\nGini: (Extract with `h2o.gini`)", tm$Gini)
   if( !is.null(tm$null_deviance)                                   )  cat("\nNull Deviance: (Extract with `h2o.nulldeviance`)", tm$null_deviance)
   if( !is.null(tm$residual_deviance)                               )  cat("\nResidual Deviance: (Extract with `h2o.residual_deviance`)", tm$residual_deviance)
-  if(!is.null(o@algorithm) && o@algorithm %in% c("gam","glm","gbm","drf","xgboost","generic")) {
+  if(!is.null(o@algorithm) && o@algorithm %in% c("gam","glm","gbm","drf","xgboost","infogram","generic")) {
     if( !is.null(tm$r2) && !is.na(tm$r2)                           )  cat("\nR^2: (Extract with `h2o.r2`)", tm$r2)
   }
   if( !is.null(tm$AIC)                                             )  cat("\nAIC: (Extract with `h2o.aic`)", tm$AIC)
@@ -380,7 +399,7 @@ setMethod("show", "H2OCoxPHModel", function(object) {
 #' @slot summary A \code{list} containing the a summary compatible with CoxPH summary used in the survival package.
 #' @aliases H2OCoxPHModelSummary
 #' @export
-setClass("H2OCoxPHModelSummary", representation(summary="list"))
+setClass("H2OCoxPHModelSummary", slots = c(summary = "list"))
 
 #' @rdname H2OCoxPHModelSummary-class
 #' @param object An \code{H2OCoxPHModelSummary} object.
@@ -433,6 +452,7 @@ coef.H2OCoxPHModelSummary <- function(object, ...) object@summary$coefficients
 #' @param fit an \code{H2OCoxPHModel} object.
 #' @param scale optional numeric specifying the scale parameter of the model.
 #' @param k numeric specifying the weight of the equivalent degrees of freedom.
+#' @export
 extractAIC.H2OCoxPHModel <- function(fit, scale, k = 2, ...) {
   fun <- get("extractAIC.coxph", getNamespace("stats"))
   if (missing(scale))
@@ -579,9 +599,14 @@ setMethod("getClusterSizes", "H2OClusteringModel", function(object) { object@mod
 #' @aliases H2OModelMetrics
 #' @export
 setClass("H2OModelMetrics",
-         representation(algorithm="character", on_train="logical", on_valid="logical", on_xval="logical", metrics="listOrNull"),
-         prototype(algorithm=NA_character_, on_train=FALSE, on_valid=FALSE, on_xval=FALSE, metrics=NULL),
-         contains="VIRTUAL")
+          slots = c(
+            algorithm = "character",
+            on_train = "logical",
+            on_valid = "logical",
+            on_xval = "logical",
+            metrics = "listOrNull"),
+         prototype = prototype(algorithm = NA_character_, on_train = FALSE, on_valid = FALSE, on_xval = FALSE, metrics = NULL),
+         contains = "VIRTUAL")
 
 #' @rdname H2OModelMetrics-class
 #' @param object An \code{H2OModelMetrics} object
@@ -613,7 +638,7 @@ setMethod("show", "H2OBinomialMetrics", function(object) {
     cat("AUC:  ", object@metrics$AUC, "\n", sep="")
     cat("AUCPR:  ", object@metrics$pr_auc, "\n", sep="")
     cat("Gini:  ", object@metrics$Gini, "\n", sep="")
-    if(!is.null(object@algorithm) && object@algorithm %in% c("gam","glm","gbm","drf","xgboost","generic")) {
+    if(!is.null(object@algorithm) && object@algorithm %in% c("gam","glm","gbm","drf","xgboost","infogram","generic")) {
 
       if (!is.null(object@metrics$r2) && !is.na(object@metrics$r2)) cat("R^2:  ", object@metrics$r2, "\n", sep="")
       if (!is.null(object@metrics$null_deviance0)) cat("Null Deviance:  ", object@metrics$null_deviance,"\n", sep="")
@@ -649,9 +674,15 @@ setClass("H2OBinomialUpliftMetrics",    contains="H2OModelMetrics")
 #' @export
 setMethod("show", "H2OBinomialUpliftMetrics", function(object) {
     callNextMethod(object)  # call to the super
+    cat("ATE: ", object@metrics$ate, "\n", sep="" )
+    cat("ATT: ", object@metrics$atc, "\n", sep="" )
+    cat("ATC: ", object@metrics$att, "\n", sep="" )
     cat("Default AUUC:  ", object@metrics$AUUC, "\n", sep="")
     cat("All types of AUUC:  ", "\n", sep="")
     print(object@metrics$auuc_table)
+    cat("Default Qini value: ", object@metrics$qini, "\n", sep="")
+    cat("All types of AECU values:  ", "\n", sep="")
+    print(object@metrics$aecu_table)
 })
 
 #' @rdname H2OModelMetrics-class
@@ -695,28 +726,8 @@ setMethod("show", "H2ORegressionMetrics", function(object) {
   cat("RMSE:  ", object@metrics$RMSE, "\n", sep="")
   cat("MAE:  ", object@metrics$mae, "\n", sep="")
   cat("RMSLE:  ", object@metrics$rmsle, "\n", sep="")
-  if(!is.null(object@algorithm) && object@algorithm %in% c("glm") && exists("sefe", where=object@metrics)) {
-      cat("sefe:  ", object@metrics$sefe, "\n", sep="")
-      cat("sere:  ", object@metrics$sere, "\n", sep="")
-      cat("fixedf:  ", object@metrics$fixedf, "\n", sep="")
-      cat("ranef:  ", object@metrics$ranef, "\n", sep="")
-      cat("randc:  ", object@metrics$randc, "\n", sep="")
-      cat("varfix:  ", object@metrics$varfix, "\n", sep="")
-      cat("varranef:  ", object@metrics$varranef, "\n", sep="")
-      cat("converge:  ", object@metrics$converge, "\n", sep="")
-      cat("dfrefe:  ", object@metrics$dfrefe, "\n", sep="")
-      cat("summvc1:  ", object@metrics$summvc1, "\n", sep="")
-      cat("summvc2:  ", object@metrics$summvc2, "\n", sep="")
-      cat("bad:  ", object@metrics$bad, "\n", sep="")
-      if (exists("hlik", where=object@metrics) && !is.null(object@metrics$hlik)) {
-      cat("hlik:  ", object@metrics$hlik, "\n", sep="")
-      cat("pvh:  ", object@metrics$pvh, "\n", sep="")
-      cat("pbvh:  ", object@metrics$pbvh, "\n", sep="")
-      cat("caic:  ", object@metrics$caic, "\n", sep="")
-      }
-  } else {
-      cat("Mean Residual Deviance :  ", h2o.mean_residual_deviance(object), "\n", sep="")
-  }
+  cat("Mean Residual Deviance :  ", h2o.mean_residual_deviance(object), "\n", sep="")
+  
   if(!is.null(object@algorithm) && object@algorithm %in% c("gam","glm","generic") && exists("r2", where=object@metrics)) {
     if (!is.na(h2o.r2(object))) cat("R^2 :  ", h2o.r2(object), "\n", sep="")
     null_dev <- h2o.null_deviance(object)
@@ -745,7 +756,11 @@ setMethod("show", "H2OClusteringMetrics", function(object) {
     cat("\nTotal Within SS: ", m$tot_withinss)
     cat("\nBetween SS: ", m$betweenss)
     cat("\nTotal SS: ", m$totss, "\n")
-    print(m$centroid_stats)
+    if( !is.null(m$centroid_stats) ){
+      print(m$centroid_stats)
+    } else {
+      cat("Centroid statistics are not available.")
+    }
   } else print(NULL)
 })
 
@@ -815,7 +830,7 @@ setClass("H2OTargetEncoderMetrics", contains="H2OModelMetrics")
 #' @slot model_id the final identifier for the model
 #' @seealso \linkS4class{H2OModel} for the final model types.
 #' @export
-setClass("H2OModelFuture", representation(job_key="character", model_id="character"))
+setClass("H2OModelFuture", slots = c(job_key = "character", model_id = "character"))
 
 #' H2O Future Segment Models
 #'
@@ -824,14 +839,14 @@ setClass("H2OModelFuture", representation(job_key="character", model_id="charact
 #' @slot segment_models_id the final identifier for the segment models collections
 #' @seealso \linkS4class{H2OSegmentModels} for the final segment models types.
 #' @export
-setClass("H2OSegmentModelsFuture", representation(job_key="character", segment_models_id="character"))
+setClass("H2OSegmentModelsFuture", slots = c(job_key = "character", segment_models_id = "character"))
 
 #' H2O Segment Models
 #'
 #' A class to contain the information for segment models.
 #' @slot segment_models_id the  identifier for the segment models collections
 #' @export
-setClass("H2OSegmentModels", representation(segment_models_id="character"))
+setClass("H2OSegmentModels", slots = c(segment_models_id = "character"))
 
 #' H2O Grid
 #'
@@ -849,14 +864,16 @@ setClass("H2OSegmentModels", representation(segment_models_id="character"))
 #' @seealso \linkS4class{H2OModel} for the final model types.
 #' @aliases H2OGrid
 #' @export
-setClass("H2OGrid", representation(grid_id = "character",
-                                   model_ids = "list",
-                                   hyper_names = "list",
-                                   failed_params = "list",
-                                   failure_details = "list",
-                                   failure_stack_traces = "list",
-                                   failed_raw_params = "matrix",
-                                   summary_table = "ANY"))
+setClass("H2OGrid",
+         slots = c(
+           grid_id = "character",
+           model_ids = "list",
+           hyper_names = "list",
+           failed_params = "list",
+           failure_details = "list",
+           failure_stack_traces = "list",
+           failed_raw_params = "matrix",
+           summary_table = "ANY"))
 
 #' @rdname h2o.keyof
 setMethod("h2o.keyof", signature("H2OGrid"), function(object) object@grid_id)
@@ -934,6 +951,116 @@ setMethod("summary", "H2OGrid",
 setClass("H2OFrame", contains = c("Keyed", "environment"))
 #' @rdname h2o.keyof
 setMethod("h2o.keyof", signature("H2OFrame"), function(object) attr(object, "id"))
+
+setClassUnion("CharacterOrNULL", c("character", "NULL"))
+setClassUnion("numericOrNULL", c("numeric", "NULL"))
+setClassUnion("H2OFrameOrNULL", c("H2OFrame", "NULL"))
+
+#' H2OInfogram class
+#'
+#' H2OInfogram class contains a subset of what a normal H2OModel will return
+#' @slot model_id string returned as part of every \code{H2OModel}
+#' @slot algorithm string denoting the algorithm used to build infogram
+#' @slot admissible_features string array denoting all predictor names which pass the cmi and relelvance threshold
+#' @slot admissible_features_valid string array denoting all predictor names which pass the cmi and relelvance threshold from validation frame
+#' @slot admissible_features_xval string array denoting all predictor names which pass the cmi and relelvance threshold from cv holdout set
+#' @slot net_information_threshold numeric value denoting threshold used for predictor selection
+#' @slot total_information_threshold numeric value denoting threshold used for predictor selection
+#' @slot safety_index_threshold numeric value denoting threshold used for predictor selection
+#' @slot relevance_index_threshold numeric value denoting threshold used for predictor selection
+#' @slot admissible_score \code{H2OFrame} that contains columns, admissible, admissible_index, relevance, cmi, cmi_raw
+#' @slot admissible_score_valid \code{H2OFrame} that contains columns, admissible, admissible_index, relevance, cmi, cmi_raw from validation frame
+#' @slot admissible_score_xval \code{H2OFrame} that contains averages of columns, admissible, admissible_index, relevance, cmi, cmi_raw from cv hold-out
+#' @export
+setClass("H2OInfogram", slots = c(model_id = "character", 
+                                  algorithm = "character", 
+                                  admissible_features = "CharacterOrNULL",  
+                                  admissible_features_valid = "CharacterOrNULL", 
+                                  admissible_features_xval = "CharacterOrNULL",
+                                  net_information_threshold = "numericOrNULL", 
+                                  total_information_threshold = "numericOrNULL", 
+                                  safety_index_threshold = "numericOrNULL", 
+                                  relevance_index_threshold = "numericOrNULL", 
+                                  admissible_score = "H2OFrame", 
+                                  admissible_score_valid = "H2OFrameOrNULL", 
+                                  admissible_score_xval = "H2OFrameOrNULL"))
+
+#' Method on \code{H2OInfogram} object which in this case is to instantiate and initialize it
+#'
+#' @param .Object An \code{H2OInfogram} object
+#' @param model_id string returned as part of every H2OModel
+#' @param ... additional arguments to pass on
+#' @return A \code{H2OInfogram} object
+#' @export
+setMethod("initialize", "H2OInfogram", function(.Object, model_id, ...) {
+  if (!missing(model_id)) {
+    infogram_model <- h2o.getModel(model_id)
+    if (is(infogram_model, "H2OModel") &&
+        (infogram_model@algorithm == "infogram")) {
+      .Object@model_id <- infogram_model@model_id
+      .Object@algorithm <- infogram_model@algorithm
+      if (!is.null(infogram_model@model$admissible_features) && !is.list(infogram_model@model$admissible_features)) {
+        .Object@admissible_features <-
+        infogram_model@model$admissible_features
+      }
+      .Object@net_information_threshold <- infogram_model@parameters$net_information_threshold
+      .Object@total_information_threshold <- infogram_model@parameters$total_information_threshold 
+      .Object@safety_index_threshold <- infogram_model@parameters$safety_index_threshold
+      .Object@relevance_index_threshold <- infogram_model@parameters$relevance_index_threshold
+      .Object@admissible_score <- h2o.getFrame(infogram_model@model$admissible_score_key$name)
+      .Object@net_information_threshold <-
+        infogram_model@parameters$net_information_threshold
+      .Object@total_information_threshold <-
+        infogram_model@parameters$total_information_threshold
+      .Object@safety_index_threshold <-
+        infogram_model@parameters$safety_index_threshold
+      .Object@relevance_index_threshold <-
+        infogram_model@parameters$relevance_index_threshold
+      .Object@admissible_score <-
+        h2o.getFrame(infogram_model@model$admissible_score_key$name)
+      if (!is.null(infogram_model@model$admissible_features_valid) &&
+          !is.list(infogram_model@model$admissible_features_valid)) {
+        .Object@admissible_features_valid <-
+          infogram_model@model$admissible_features_valid
+      } else {
+        .Object@admissible_features_valid <- NULL
+      }
+      if (!is.null(infogram_model@model$admissible_features_xval) &&
+          !is.list(infogram_model@model$admissible_features_xval)) {
+        .Object@admissible_features_xval <-
+          infogram_model@model$admissible_features_xval
+      } else {
+        .Object@admissible_features_xval <- NULL
+      }
+      if (!is.null(infogram_model@model$admissible_score_key_valid)) {
+        .Object@admissible_score_valid <-
+          h2o.getFrame(infogram_model@model$admissible_score_key_valid$name)
+      } else {
+        .Object@admissible_score_valid <- NULL
+      }
+      if (!is.null(infogram_model@model$admissible_score_key_xval)) {
+        .Object@admissible_score_xval <-
+          h2o.getFrame(infogram_model@model$admissible_score_key_xval$name)
+      } else {
+        .Object@admissible_score_xval <- NULL
+      }
+      return(.Object)
+    } else {
+      stop('Input must be H2OModel with algorithm == "infogram".')
+    }
+  } else {
+    stop("A model Id must be used to instantiate a H2OInfogram.")
+  }
+})
+
+#' wrapper function for instantiating H2OInfogram
+#' @param model_id is string of H2OModel object
+#' @param ... parameters to algorithm, admissible_features, ...
+#' @return A \code{H2OInfogram} object
+#' @export
+H2OInfogram <- function(model_id, ...) {
+  initialize(new("H2OInfogram"), model_id = model_id, ...)
+}
 
 #'
 #' The H2OAutoML class
@@ -1057,6 +1184,8 @@ setMethod("h2o.varimp", signature("H2OModel"), function(object) {
 #'
 #' @param object An \linkS4class{H2OAutoML} object.
 #' @param top_n Show at most top_n models
+#' @param num_of_features Integer specifying the number of features returned based on the maximum
+#'                        importance across the models. Use NULL for unlimited. Defaults to NULL.
 #' @examples
 #' \dontrun{
 #' library(h2o)
@@ -1070,14 +1199,16 @@ setMethod("h2o.varimp", signature("H2OModel"), function(object) {
 #' h2o.varimp(aml)
 #' }
 #' @export
-setMethod("h2o.varimp", signature("H2OAutoML"), function(object, top_n = 20) {
-  .varimp_matrix(object, top_n = top_n)
+setMethod("h2o.varimp", signature("H2OAutoML"), function(object, top_n = 20, num_of_features = NULL) {
+  .varimp_matrix(object, top_n = top_n, num_of_features = num_of_features)
 })
 
 #'
 #' Retrieve the variable importance.
 #'
 #' @param object A leaderboard frame.
+#' @param num_of_features Integer specifying the number of features returned based on the maximum
+#'                        importance across the models. Use NULL for unlimited. Defaults to NULL.
 #' @examples
 #' \dontrun{
 #' library(h2o)
@@ -1091,9 +1222,9 @@ setMethod("h2o.varimp", signature("H2OAutoML"), function(object, top_n = 20) {
 #' h2o.varimp(aml@leaderboard[1:5,])
 #' }
 #' @export
-setMethod("h2o.varimp", signature("H2OFrame"), function(object) {
+setMethod("h2o.varimp", signature("H2OFrame"), function(object, num_of_features = NULL) {
   if (! "model_id" %in% names(object)){
     stop("This is not a leaderboard frame. Only frames containing `model_id` column are supported.")
   }
-  .varimp_matrix(object)
+  .varimp_matrix(object, num_of_features = num_of_features)
 })

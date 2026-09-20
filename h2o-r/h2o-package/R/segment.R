@@ -1,8 +1,8 @@
-#'
-#' H2O Segmented-Data Bulk Model Training
-#'
-#' Provides a set of functions to train a group of models on different
-#' segments (subpopulations) of the training set. 
+#
+# H2O Segmented-Data Bulk Model Training
+#
+# Provides a set of functions to train a group of models on different
+# segments (subpopulations) of the training set. 
 
 #--------------------------------------------
 # Segmented-data bulk model training function
@@ -11,8 +11,8 @@
 #'
 #' Start Segmented-Data bulk Model Training for a given algorithm and parameters.
 #'
-#' @param algorithm  Name of algorithm to use in training segment models (gbm, randomForest, kmeans, glm, deeplearning, naivebayes, psvm,
-#'        xgboost, pca, svd, targetencoder, aggregator, word2vec, coxph, isolationforest, kmeans, stackedensemble, glrm, gam, anovaglm, maxrglm).
+#' @param algorithm  Name of algorithm to use in training segment models (gbm, randomForest, kmeans, glm, hglm, deeplearning, naivebayes, psvm,
+#'        xgboost, pca, svd, targetencoder, aggregator, word2vec, coxph, isolationforest, kmeans, stackedensemble, glrm, gam, anovaglm, modelselection).
 #' @param segment_columns A list of columns to segment-by. H2O will group the training (and validation) dataset by the segment-by columns
 #'        and train a separate model for each segment (group of rows).
 #' @param segment_models_id Identifier for the returned collection of Segment Models. If not specified it will be automatically generated.
@@ -40,7 +40,7 @@ h2o.train_segments <- function(algorithm,
                                parallelism = 1,
                                ...)
 {
-    train_segments_fun_name <- sprintf(".h2o.train_segments_%s", algorithm)
+    train_segments_fun_name <- sprintf(".h2o.train_segments_%s", tolower(algorithm))
   if (!exists(train_segments_fun_name)) {
     stop(sprintf("Algorithm %s is not recognized, please check the spelling. For the name to be valid, a function h2o.%s needs to exist as well).", algorithm, algorithm))
   }

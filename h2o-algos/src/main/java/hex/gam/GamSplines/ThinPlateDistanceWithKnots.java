@@ -18,7 +18,7 @@ import static water.util.ArrayUtils.transpose;
 
 /**
  * Implementation details of this class can be found in GamThinPlateRegressionH2O.doc attached to this 
- * JIRA: https://h2oai.atlassian.net/browse/PUBDEV-7860
+ * GitHub issue: https://github.com/h2oai/h2o-3/issues/7783
  **/
 public class ThinPlateDistanceWithKnots extends MRTask<ThinPlateDistanceWithKnots> {
   final double[][] _knots;  // store knot values for the spline class
@@ -92,7 +92,7 @@ public class ThinPlateDistanceWithKnots extends MRTask<ThinPlateDistanceWithKnot
             false, false, false, false, null);
     // expand the frame with k-M columns which will contain the product of Xnmd*ZCS
     for (int colInd = 0; colInd < newColNum; colInd++) {
-      fr.add(colNameStart+"_cs_"+colInd, fr.anyVec().makeZero());
+      fr.add(colNameStart+"_tp_"+colInd, fr.anyVec().makeZero());
     }
     new BMulInPlaceTask(frInfo, zCST, numCols, false).doAll(fr);
     for (int index=0; index < numCols; index++) { // remove the original gam columns
@@ -102,7 +102,7 @@ public class ThinPlateDistanceWithKnots extends MRTask<ThinPlateDistanceWithKnot
     return fr;
   }
   
-  public double[][] generatePenalty(double[][] qmat) {
+  public double[][] generatePenalty() {
     double[][] penaltyMat = new double[_knotNum][_knotNum];
     double[][] knotsTranspose = transpose(_knots);
     double[] tempVal = MemoryManager.malloc8d(_knotNum);

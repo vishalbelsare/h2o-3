@@ -34,6 +34,7 @@
 #`             the first N (typically 10) rows and all cols of the frame
 #` E$nrow   <- the row count (total size, generally much larger than the local cached rows)
 #` E$types  <- the H2O column types
+NULL
 
 # since we only import data.table via requireNamespace this is required for data.table calls to
 # stop pretending to being data.frame and start behaving as data.table
@@ -816,7 +817,7 @@ h2o.unique <- function(x, include_nas=FALSE){
 #'        interval notation.
 #' @param include.lowest \code{Logical}, indicationg if an 'x[i]' equal to the lowest (or highest, for \code{right =
 #'        FALSE} 'breaks' value should be included
-#' @param right /code{Logical}, indicating if the intervals should be closed on the right (opened on the left) or vice
+#' @param right \code{Logical}, indicating if the intervals should be closed on the right (opened on the left) or vice
 #'        versa.
 #' @param dig.lab Integer which is used when labels are not given, determines the number of digits used in formatting
 #'        the break numbers.
@@ -851,25 +852,35 @@ cut.H2OFrame <- h2o.cut
 #' \code{match} and \code{\%in\%} return values similar to the base R generic
 #' functions.
 #'
-#' @param x a categorical vector from an H2OFrame object with
+#' @param x a vector from an H2OFrame object with
 #'        values to be matched.
-#' @param table an R object to match \code{x} against.
-#' @param nomatch the value to be returned in the case when no match is found.
-#' @param incomparables a vector of calues that cannot be matched. Any value in
-#'        \code{x} matching a value in this vector is assigned the
-#'        \code{nomatch} value.
-#' @return Returns a vector of the positions of (first) matches of its first argument in its second
+#' @param table an R object to match \code{x} against. Duplicates are ignored. The index of the first occurrence 
+#'        will be used.
+#' @param nomatch the value to be returned in the case when no match is found. Numeric value or NaN, default is NaN.
+#' @param start_index  index from which this starts the indexing of the table list, numeric value >=0, default is 1.
+#' @return Returns a new H2OFrame containing a vector where the index of value from the table is returned 
+#'        if the value matches; returns \code{nomatch} value otherwise.
 #' @seealso \code{\link[base]{match}} for base R implementation.
 #' @examples
 #' \dontrun{
 #' h2o.init()
-#' iris_hf <- as.h2o(iris)
-#' h2o.match(iris_hf[, 5], c("setosa", "versicolor"))
+#' data <- as.h2o(iris)
+#' match_col <- h2o.match(data$Species, c("setosa", "versicolor", "setosa"))
+#' iris_match <- h2o.cbind(data, match_col)
+#' sample <- h2o.splitFrame(iris_match, ratios=0.05, seed=1)[[1]]
+#' sample
+#' #   Sepal.Length Sepal.Width Petal.Length Petal.Width    Species  C1
+#' #1          5.2         3.5          1.5         0.2     setosa   1
+#' #2          5.0         3.5          1.3         0.3     setosa   1
+#' #3          7.0         3.2          4.7         1.4 versicolor   2
+#' #4          4.9         2.4          3.3         1.0 versicolor   2
+#' #5          5.5         2.4          3.8         1.1 versicolor   2
+#' #6          5.8         2.7          5.1         1.9  virginica NaN
 #' }
 #' @export
-h2o.match <- function(x, table, nomatch = 0, incomparables = NULL) {
+h2o.match <- function(x, table, nomatch=NA_integer_, start_index=1) {
   if( !is.H2OFrame(table) && length(table)==1 && base::is.character(table) ) table <- .quote(table)
-  .newExpr("match", chk.H2OFrame(x), table, nomatch, incomparables)
+  .newExpr("match", chk.H2OFrame(x), table, nomatch, start_index)
 }
 
 #' @rdname h2o.match
@@ -879,9 +890,9 @@ match.H2OFrame <- h2o.match
 # %in% method
 #' @rdname h2o.match
 #' @export
-`%in%` <- function(x,table) {
-  if( is.H2OFrame(x) ) h2o.match(x,table,nomatch=0)
-  else base::`%in%`(x,table)
+`%in%` <- function(x,table) { 
+  if( is.H2OFrame(x) ) h2o.match(x,table,nomatch=0) > 0
+  else base::`%in%`(x, as.vector(table))
 }
 
 #' Remove Rows With NAs
@@ -1225,8 +1236,8 @@ h2o.impute <- function(data, column=0, method=c("mean","median","mode"), # TODO:
   stop('No column named ', by, ' in ', substitute(data), '.')
   } else if(is.integer(by)) { vars <- by }
   else if(is.numeric(by)) {   vars <- as.integer(by) }  # this will happen eg c(1,2,3)
-  if( vars <= 0L || vars > (ncol(data)) )
-  stop('Column ', vars, ' out of range for frame columns ', ncol(data), '.')
+  if(any(vars <= 0L | vars > (ncol(data))))
+    stop('Column ', vars, ' out of range for frame columns ', ncol(data), '.')
   gb.cols <- .row.col.selector(vars,envir=parent.frame())
   }
 
@@ -1305,16 +1316,17 @@ h2o.melt <- function(x, id_vars, value_vars=NULL, var_name="variable", value_nam
     .newExpr("melt", chk.H2OFrame(x), .str.list(id_vars), .str.list(value_vars), .quote(var_name), .quote(value_name), skipna)
 }
 
-# H2O topBottomN
-#
-# topBottomN function will will grab the top N percent or botom N percent of values of a column and return it in a
-#  H2OFrame.
-#
-# @param x an H2OFrame
-# @param column is a column name or column index to grab the top N percent value from
-# @param nPercent a top percentage values to grab
-# @param grabTopN if -1 grab bottom percentage, 1 grab top percentage
-# @return An H2OFrame with 2 columns: first column is the original row indices, second column contains the values
+#' H2O topBottomN
+#'
+#' topBottomN function will will grab the top N percent or botom N percent of values of a column and return it in a
+#'  H2OFrame.
+#'
+#' @param x an H2OFrame
+#' @param column is a column name or column index to grab the top N percent value from
+#' @param nPercent a top percentage values to grab
+#' @param grabTopN if -1 grab bottom percentage, 1 grab top percentage
+#' @return An H2OFrame with 2 columns: first column is the original row indices, second column contains the values
+#' @export
 h2o.topBottomN <- function(x, column, nPercent, grabTopN){
   cnames = names(x)
   colIndex=0
@@ -1429,7 +1441,7 @@ h2o.year <- function(x) .newExpr("year", chk.H2OFrame(x))
 #' library(h2o)
 #' h2o.init()
 #' 
-#' f <- "https://s3.amazonaws.com/h2o-public-test-data/smalldata/jira/v-11-eurodate.csv
+#' f <- "https://s3.amazonaws.com/h2o-public-test-data/smalldata/jira/v-11-eurodate.csv"
 #' hdf <- h2o.importFile(f)
 #' h2o.month(hdf["ds9"])
 #' }
@@ -1471,7 +1483,7 @@ h2o.week <- function(x) .newExpr("week", chk.H2OFrame(x))
 #' library(h2o)
 #' h2o.init()
 #' 
-#' f <- "https://s3.amazonaws.com/h2o-public-test-data/smalldata/jira/v-11-eurodate.csv
+#' f <- "https://s3.amazonaws.com/h2o-public-test-data/smalldata/jira/v-11-eurodate.csv"
 #' hdf <- h2o.importFile(f)
 #' h2o.day(hdf["ds9"])
 #' }
@@ -1492,7 +1504,7 @@ h2o.day <- function(x) .newExpr("day", chk.H2OFrame(x))
 #' library(h2o)
 #' h2o.init()
 #' 
-#' f <- "https://s3.amazonaws.com/h2o-public-test-data/smalldata/jira/v-11-eurodate.csv
+#' f <- "https://s3.amazonaws.com/h2o-public-test-data/smalldata/jira/v-11-eurodate.csv"
 #' hdf <- h2o.importFile(f)
 #' h2o.dayOfWeek(hdf["ds9"])
 #' }
@@ -1512,7 +1524,7 @@ h2o.dayOfWeek <- function(x) .newExpr("dayOfWeek", chk.H2OFrame(x))
 #' library(h2o)
 #' h2o.init()
 #' 
-#' f <- "https://s3.amazonaws.com/h2o-public-test-data/smalldata/jira/v-11-eurodate.csv
+#' f <- "https://s3.amazonaws.com/h2o-public-test-data/smalldata/jira/v-11-eurodate.csv"
 #' hdf <- h2o.importFile(f)
 #' h2o.hour(hdf["ds9"])
 #' }
@@ -1598,7 +1610,7 @@ h2o.mktime <- function(year=1970,month=0,day=0,hour=0,minute=0,second=0,msec=0) 
 #' library(h2o)
 #' h2o.init()
 #' 
-#' f <- "https://s3.amazonaws.com/h2o-public-test-data/smalldata/jira/v-11-eurodate.csv
+#' f <- "https://s3.amazonaws.com/h2o-public-test-data/smalldata/jira/v-11-eurodate.csv"
 #' hdf <- h2o.importFile(f)
 #' h2o.as_date(hdf["ds5"], "%d.%m.%y %H:%M")
 #' }
@@ -1648,7 +1660,10 @@ h2o.listTimezones <- function() .fetch.data(.newExpr("listTimeZones"),1000L)
 .num.list <- function(nl) paste0('[',paste0(nl,collapse=" "),']')
 
 # Convert to Currents string-list syntax
-.quote <- function(x) paste0('"',x,'"')
+.quote <- function(x) {
+    escaped <- gsub('(?<!\\\\)(")', '\\\\"', x, perl = TRUE)
+    paste0('"', escaped, '"')
+}
 .str.list <- function(sl) {
   if (is.null(sl))
     "[]"
@@ -1692,7 +1707,7 @@ NULL
 #' @export
 `[.H2OFrame` <- function(data,row,col,drop=TRUE) {
   chk.H2OFrame(data)
-
+  types <- attr(data, "types")
   # This function is called with a huge variety of argument styles
   # Here's the breakdown:
   #   Style          Type  #args  Description
@@ -1725,7 +1740,7 @@ NULL
     stop(paste0("Row must be selected as an integer index, character, logical, or H2OFrame but got ", class(row)))
   }
   # Boolean check for negative indexes
-  is_neg_idx <- !missing(col) && !missing(row) && !is.H2OFrame(row) && !is.H2OFrame(col) && ((is.numeric(col) && col <= 0) || (is.numeric(row) && row <= 0))
+  is_neg_idx <- !missing(col) && !missing(row) && !is.H2OFrame(row) && !is.H2OFrame(col) && ((is.numeric(col) && any(col <= 0)) || (is.numeric(row) && any(row <= 0)))
   # Have a row & column selector with negative col or negative row indexes?
   if(is_neg_idx){
     if( is.logical(col) ) { # Columns by boolean choice
@@ -1769,14 +1784,16 @@ NULL
   }
 
   # Have a row selector?
-  if( !missing(row) && (is.H2OFrame(row) || !is.na(row)) && !(is_neg_idx)) {
+  if( !missing(row) && (is.H2OFrame(row) || !all(is.na(row))) && !(is_neg_idx)) {
     if( !is.H2OFrame(row) )    # Generic R expression
       row <- .row.col.selector(substitute(row), row,envir=parent.frame())
     data <- .newExpr("rows",data,row) # Row selector
   }
 
-  if( is1by1 ) .fetch.data(data,1L)[[1]]
-  else data
+  data <- if( is1by1 ) .fetch.data(data,1L)[[1]]
+            else data
+  attr(data, "types") <- types[col]
+  return(data)
 }
 
 #' @rdname H2OFrame-Extract
@@ -2258,7 +2275,7 @@ tail.H2OFrame <- h2o.tail
 #'
 #' @rdname is.factor
 #' @param x An H2OFrame object
-#' @example 
+#' @examples
 #' \dontrun{
 #' library(h2o)
 #' h2o.init()
@@ -2399,7 +2416,7 @@ str.H2OFrame <- function(object, ..., cols=FALSE) {
   chk.H2OFrame(data)
   allRow <- missing(row)
   allCol <- missing(col)
-  if( !allCol && is.na(col) ) col <- as.list(match.call())$col
+  if( !allCol && all(is.na(col)) ) col <- as.list(match.call())$col
 
   # Named column assignment; the column name was passed in as "row"
   # fr["baz"] <- qux
@@ -2415,7 +2432,7 @@ str.H2OFrame <- function(object, ..., cols=FALSE) {
   if(!allCol && !is.numeric(col) && !base::is.character(col))
     stop("`col` must be missing or a numeric or character vector")
   if( !is.null(value) && !is.H2OFrame(value) ) {
-    if( is.na(value) ) value <- NA_integer_  # pick an NA... any NA (the damned numeric one will do)
+    if( length(value) == 1 && is.na(value) ) value <- NA_integer_  # pick an NA... any NA (the damned numeric one will do)
     else if( !is.numeric(value) && !base::is.character(value) )
       stop("`value` can only be an H2OFrame object or a numeric or character vector")
   }
@@ -2441,7 +2458,7 @@ str.H2OFrame <- function(object, ..., cols=FALSE) {
       }
     } else idx <- col
     if( is.null(value) ) return(`[.H2OFrame`(data,row=-idx)) # Assign a null: delete by selecting inverse columns
-      if( idx==(ncol(data)+1) && is.na(name) ) name <- paste0("C",idx)
+      if(length(idx) == 1 && idx == (ncol(data) + 1) && is.na(name)) name <- paste0("C",idx)
     cols <- .row.col.selector(idx, envir=parent.frame())
   }
 
@@ -2624,7 +2641,7 @@ h2o.summary <- function(object, factors=6L, exact_quantiles=FALSE, ...) {
   result <- as.table(as.matrix(cols))
   }
   }
-  if( is.null(result) || dim(result) == 0 ) return(NULL)
+  if( is.null(result) || all(dim(result) == 0) ) return(NULL)
   colnames(result) <- cnames
   rownames(result) <- rep("", nrow(result))
   # Print warning if approx quantiles are computed
@@ -4095,6 +4112,7 @@ use.package <- function(package,
 #'
 #' @param x An \code{R} object.
 #' @param destination_frame A string with the desired name for the H2OFrame
+#' @param skipped_columns A list of integer containing columns to be skipped and not parsed into the final frame
 #' @param use_datatable allow usage of data.table
 #' @param \dots arguments passed to method arguments.
 #' @export
@@ -4121,15 +4139,19 @@ use.package <- function(package,
 #'   stopifnot(is.h2o(m_hf), dim(m_hf) == dim(m))
 #' }
 #' }
-as.h2o <- function(x, destination_frame="", ...) {
+as.h2o <- function(x, destination_frame="", skipped_columns=NULL, ...) {
   .key.validate(destination_frame)
-  UseMethod("as.h2o")
+  if (is.null(skipped_columns)) {
+    UseMethod("as.h2o")
+  } else {
+    as.h2o.data.frame(x, destination_frame=destination_frame, skipped_columns=skipped_columns)
+  }
 }
 
 #' @rdname as.h2o
 #' @method as.h2o default
 #' @export
-as.h2o.default <- function(x, destination_frame="", ...) {
+as.h2o.default <- function(x, destination_frame="", skipped_columns=NULL, ...) {
   if( destination_frame=="" ) {
     subx <- destination_frame.guess(deparse(substitute(x)))
     destination_frame <- .key.make(if(nzchar(subx)) subx else paste0(class(x), "_", collapse = ""))
@@ -4138,13 +4160,13 @@ as.h2o.default <- function(x, destination_frame="", ...) {
     data.frame(C1=x)
   else
     as.data.frame(x, ...)
-  as.h2o.data.frame(x, destination_frame=destination_frame)
+  as.h2o.data.frame(x, destination_frame=destination_frame, skipped_columns=skipped_columns)
 }
 
 #' @rdname as.h2o
 #' @method as.h2o H2OFrame
 #' @export
-as.h2o.H2OFrame <- function(x, destination_frame="", ...) {
+as.h2o.H2OFrame <- function(x, destination_frame="", skipped_columns=NULL, ...) {
   if( destination_frame=="" ) {
     subx <- destination_frame.guess(deparse(substitute(x)))
     destination_frame <- .key.make(if(nzchar(subx)) subx else "H2OFrame_copy")
@@ -4157,9 +4179,9 @@ as.h2o.H2OFrame <- function(x, destination_frame="", ...) {
 #' @details 
 #' Method \code{as.h2o.data.frame} will use \code{\link[data.table]{fwrite}} if data.table package is installed in required version.
 #' @seealso \code{\link{use.package}}
-#' @references \url{https://www.h2o.ai/blog/fast-csv-writing-for-r/}
+#' @references \url{https://h2o.ai/blog/2016/fast-csv-writing-for-r/}
 #' @export
-as.h2o.data.frame <- function(x, destination_frame="", use_datatable=TRUE, ...) {
+as.h2o.data.frame <- function(x, destination_frame="", skipped_columns=NULL, use_datatable=TRUE, ...) {
   if( destination_frame=="" ) {
     subx <- destination_frame.guess(deparse(substitute(x)))
     destination_frame <- .key.make(if(nzchar(subx)) subx else "data.frame")
@@ -4189,7 +4211,8 @@ as.h2o.data.frame <- function(x, destination_frame="", use_datatable=TRUE, ...) 
   if (verbose) cat(sprintf("writing csv to disk using '%s' took %.2fs\n", fun, proc.time()[[3]]-pt))
   #if (verbose) pt <- proc.time()[[3]] # timings inside
   h2f <- h2o.uploadFile(tmpf, destination_frame = destination_frame, header = TRUE, col.types=types,
-                        col.names=colnames(x, do.NULL=FALSE, prefix="C"), na.strings=rep(c("NA_h2o"),ncol(x)))
+                        col.names=colnames(x, do.NULL=FALSE, prefix="C"), na.strings=rep(c("NA_h2o"),ncol(x)), 
+                        skipped_columns=skipped_columns)
   #if (verbose) cat(sprintf("uploading csv to h2o using 'h2o.uploadFile' took %.2fs\n", proc.time()[[3]]-pt))
   file.remove(tmpf)
   h2f
@@ -4201,7 +4224,7 @@ as.h2o.data.frame <- function(x, destination_frame="", use_datatable=TRUE, ...) 
 #' To speedup execution time for large sparse matrices, use h2o datatable.  Make sure you have installed and imported data.table and slam packages.
 #' Turn on h2o datatable by options("h2o.use.data.table"=TRUE)
 #' @export
-as.h2o.Matrix <- function(x, destination_frame="", use_datatable=TRUE, ...) {
+as.h2o.Matrix <- function(x, destination_frame="", skipped_columns=NULL, use_datatable=TRUE, ...) {
   if( destination_frame=="") {
     subx <- destination_frame.guess(deparse(substitute(x)))
     destination_frame <- .key.make(if(nzchar(subx)) subx else "Matrix")
@@ -4449,10 +4472,10 @@ as.logical.H2OFrame <- function(x, ...) as.vector.H2OFrame(x, "logical")
 }
 
 #' Logical and for H2OFrames
-#' 
+#'
 #' @param x An H2OFrame object
 #' @param y An H2OFrame object
-#' @export	
+#' @export
 `&&` <- function (x, y) {
   if( is.H2OFrame(x)  ) .newExpr("&&", x,y)
   else base::`&&`(x,y)
@@ -4768,7 +4791,7 @@ generate_col_ind <-function(data, by) {
     group.cols <- as.integer(by)
   }
 
-  if(group.cols <= 0L || group.cols > ncol(data)) {
+  if(any(group.cols <= 0L | group.cols > ncol(data))) {
    stop('Column ', group.cols, ' out of range for frame columns ', ncol(data), '.')
   }
 
@@ -4943,6 +4966,35 @@ h2o.relevel <- function(x,y) {
   .newExpr("relevel", x, .quote(y))
 }
 
+#' Reorders levels of factor columns by the frequencies for the individual levels. 
+#'
+#' The levels of a factor are reordered so that the most frequency level is at level 0, 
+#' remaining levels are ordered from the second most frequent to the least frequent.
+#'
+#' @param x H2O frame with some factor columns
+#' @param weights_column optional name of weights column
+#' @param top_n optional number of most frequent levels to move to the top (eg.: for top_n=1 move only the most frequent level)
+ #' @return new reordered frame
+#' @examples
+#' \dontrun{
+#' library(h2o)
+#' h2o.init()
+#'
+#' # Convert iris dataset to an H2OFrame
+#' iris_hf <- as.h2o(iris)
+#' # Look at current ordering of the Species column levels
+#' h2o.levels(iris_hf["Species"])
+#' # "setosa"     "versicolor" "virginica" 
+#' # Change the reference level to "virginica"
+#' iris_hf["Species"] <- h2o.relevel_by_frequency(x = iris_hf["Species"])
+#' # Observe new ordering
+#' h2o.levels(iris_hf["Species"])
+#' # "virginica"  "versicolor" "setosa"
+#' }
+#' @export
+h2o.relevel_by_frequency <- function(x, weights_column=NULL, top_n=-1) {
+  .newExpr("relevel.by.freq", x, ifelse(is.null(weights_column), NA, .quote(weights_column)), top_n)
+}
 
 #' Group and Apply by Column
 #'
@@ -5010,7 +5062,7 @@ h2o.group_by <- function(data, by, ..., gb.control=list(na.methods=NULL, col.nam
   } else if(is.numeric(by)) {   # this will happen eg c(1,2,3)
     group.cols <- as.integer(by)
   }
-  if(group.cols <= 0L || group.cols > ncol(data))
+  if(any(group.cols <= 0L | group.cols > ncol(data)))
     stop('Column ', group.cols, ' out of range for frame columns ', ncol(data), '.')
   args <- c(args,.row.col.selector(group.cols,envir=parent.frame()))
 
@@ -5048,7 +5100,7 @@ h2o.group_by <- function(data, by, ..., gb.control=list(na.methods=NULL, col.nam
       col.idx <- match(col.name, colnames(data))
 
     # no such column, stop!
-      if( is.na(col.idx) ) stop('No column named ', col.name, ' in ', substitute(data), '.')
+      if( any(is.na(col.idx)) ) stop('No column(s) named "', paste0(col.name[is.na(col.idx)], collapse = '", "'), '" in ', substitute(data), '.')
     # got a good column index, return it.
       col.idx
     }
@@ -5171,7 +5223,7 @@ h2o.ddply <- function (X, .variables, FUN, ..., .progress = 'none') {
   }
 
   # Change cols from 1 base notation to 0 base notation then verify the column is within range of the dataset
-  if(vars <= 0L || vars > ncol(X))
+  if(any(vars <= 0L | vars > ncol(X)))
     stop('Column ', vars, ' out of range for frame columns ', ncol(X), '.')
   vars <- .row.col.selector(vars,envir=parent.frame())
 
@@ -5190,7 +5242,7 @@ h2o.ddply <- function (X, .variables, FUN, ..., .progress = 'none') {
 
   # Look for an H2O function that works on an H2OFrame; it will be handed an H2OFrame of 1 col
   fr.name <- paste0(fname,".H2OFrame")
-  if( exists(fr.name) ) {
+  if( length(fr.name) == 1 && exists(fr.name) ) {  # anonymous function has multiple parts
     FUN <- get(fr.name)         # Resolve function to the H2O flavor
     # Add in any default args
     args <- formals(FUN)[-1L]
@@ -5259,7 +5311,7 @@ apply <- function(X, MARGIN, FUN, ...) {
 
   # Look for an H2O function that works on an H2OFrame; it will be handed an H2OFrame of 1 col
   fr.name <- paste0(fname,".H2OFrame")
-  if( exists(fr.name) ) {
+  if( length(fr.name) == 1 && exists(fr.name) ) {
     FUN <- get(fr.name)         # Resolve function to the H2O flavor
     # Add in any default args
     args <- formals(FUN)[-1L]
@@ -5899,7 +5951,7 @@ h2o.target_encode_apply <- function(data, x, y, target_encode_map, holdout_type,
     noise_level <- ifelse(is.factor(data[[y]]), 0.01, (max(data[[y]], na.rm = TRUE) - min(data[[y]], na.rm = TRUE))*0.01)
   }
   
-  # Remove string columns from `data` (see: https://0xdata.atlassian.net/browse/PUBDEV-5266)
+  # Remove string columns from `data` (see: https://github.com/h2oai/h2o-3/issues/12138)
   dd <- h2o.describe(data)
   string_cols <- as.character(dd[which(dd$Type == "string"), "Label"])
   if (length(string_cols) > 0) {

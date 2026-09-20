@@ -3,22 +3,39 @@
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
-========
 Overview
 ========
 
-Welcome to the H2O documentation site! Depending on your area of interest, select a learning path from the sidebar, or look at the full content outline below.
+Welcome to the H2O-3 documentation site! Select a learning path from the sidebar or browse through the full content outline below.
 
-We're glad you're interested in learning more about H2O. If you have questions or ideas to share, please post them to the `H2O community site on Stack Overflow <http://stackoverflow.com/questions/tagged/h2o>`__.
+.. note::
 
-Additional Resources:
+   This documentation covers H2O-3 OSS, the community edition. H2O-3 Secure is the commercially supported tier. It adds Hadoop and Kubernetes packages, model artifact extraction (MOJO and POJO), commercial CVE patching and long-term support, audit-supporting capabilities (SOC 2, ISO 27001, ISO 42001), and premium support with SLAs.
 
-- See how are customers are using H2O at https://www.h2o.ai/customers/.
-- Keep up to date with the latest H2O blogs at https://www.h2o.ai/blog/.
-- Review projects, applications, research papers, tutorials, courses, and books that use H2O at https://github.com/h2oai/awesome-h2o.
+   For a comparison of the two, contact enterprise@h2o.ai.
+
+We're excited you're interesting in learning more about H2O-3. If you have questions or ideas to share, please post them to the H2O community site on `Stack Overflow <http://stackoverflow.com/questions/tagged/h2o>`__.
+
+Additional resources
+--------------------
+
+The following are additional resources to learn more information about H2O-3:
+
+- `See how customers are using H2O-3 <https://www.h2o.ai/customers/>`__.
+- Keep up to date with `the latest H2O-3 blogs <https://www.h2o.ai/blog/>`__.
+- `Explore Awesome H2O <https://github.com/h2oai/awesome-h2o>`__ to review projects, applications, research papers, tutorials, courses, and books that use H2O-3.
+- Learn about securing your installation by following `H2O-3's security guidelines <https://docs.h2o.ai/h2o/latest-stable/h2o-docs/security.html>`__.
 
 .. toctree::
    :maxdepth: 2
+   :caption: Recent Changes
+
+   Change Log <https://github.com/h2oai/h2o-3/blob/master/Changes.md>
+   blog-releases
+
+.. toctree::
+   :maxdepth: 2
+   :caption: User Guide
    
    welcome
 
@@ -101,7 +118,12 @@ Additional Resources:
 .. toctree::
    :maxdepth: 2
 
-   explain   
+   explain 
+
+.. toctree::
+   :maxdepth: 2
+
+   admissible 
 
 .. toctree::
    :maxdepth: 2
@@ -112,6 +134,11 @@ Additional Resources:
    :maxdepth: 2
 
    productionizing
+
+.. toctree::
+   :maxdepth: 2
+
+   mojo-capabilities
 
 .. toctree::
    :maxdepth: 2
@@ -134,6 +161,11 @@ Additional Resources:
    security
 
 .. toctree::
+   :maxdepth: 2
+
+   telemetry
+
+.. toctree::
    :maxdepth: 1
 
    faq
@@ -152,4 +184,10 @@ Additional Resources:
    :maxdepth: 2
 
    api-reference
+
+.. toctree::
+   :maxdepth: 2
+
+   additional-resources
+
 

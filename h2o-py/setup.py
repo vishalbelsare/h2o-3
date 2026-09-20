@@ -67,15 +67,16 @@ setup(
         "License :: OSI Approved :: Apache Software License",
 
         # Specify the Python versions you support here. In particular, ensure
-        # that you indicate whether you support Python 2, Python 3 or both.
-        "Programming Language :: Python :: 2.7",
-        "Programming Language :: Python :: 3.5",
-        "Programming Language :: Python :: 3.6",
         "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11"
     ],
 
     keywords='machine learning, data mining, statistical analysis, modeling, big data, distributed, parallel',
+
+    python_requires='>=3.7',
 
     packages=packages,
     package_data={"h2o": [
@@ -86,7 +87,7 @@ setup(
     ]},
 
     # run-time dependencies
-    install_requires=["requests", "tabulate", "future"],
+    install_requires=["requests", "tabulate"],
 
     # optional dependencies
     extras_require={

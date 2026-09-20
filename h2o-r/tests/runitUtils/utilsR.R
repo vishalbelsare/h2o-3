@@ -1,5 +1,6 @@
 #'
 #'
+#'
 #' ----------------- Additional Runit Utilities -----------------
 #'
 #'
@@ -48,6 +49,12 @@ function(p) {
     p <- unlist(strsplit(p, "\\\\"))
   }
   p
+}
+
+isClient<-
+function() {
+  res <- .h2o.fromJSON(jsonlite::fromJSON(.h2o.doSafeGET(urlSuffix = .h2o.__CLOUD), simplifyDataFrame=FALSE))
+  return(res$is_client)
 }
 
 #' Compute a path distance.
@@ -106,10 +113,13 @@ function(cur.dir, root, root.parent = NULL) {
 default.packages <-
 function() {
   to_require <- c("jsonlite", "RCurl", "RUnit", "R.utils", "testthat", "ade4", "glmnet", "gbm", "ROCR", "e1071",
-                  "tools", "statmod", "fpc", "cluster")
+                  "tools", "statmod", "fpc", "cluster", "survival")
   if (Sys.info()['sysname'] == "Windows") {
     options(RCurlOptions = list(cainfo = system.file("CurlSSL", "cacert.pem", package = "RCurl"))) }
-  invisible(lapply(to_require,function(x){require(x,character.only=TRUE,quietly=TRUE,warn.conflicts=FALSE)}))
+  invisible(lapply(to_require,function(x) {
+    if (!require(x,character.only=TRUE,quietly=TRUE,warn.conflicts=FALSE))
+      warning(paste("Package", x, "is not available."), call. = FALSE)
+  }))
 }
 
 read.zip<-
@@ -371,8 +381,43 @@ alignData <- function(df, center = FALSE, scale = FALSE, ignore_const_cols = TRU
   genDummyCols(df.clone, use_all_factor_levels)
 }
 
+.print_curl_info <- function () {
+  cat("/----------------------------------------CURL INFO----------------------------------------\\\n")
+  if (use.package("curl", version = "4.3.0", use = !getOption("prefer_RCurl", FALSE))) {
+    cat("                    ##################################################\n",
+        "                    #               USING curl PACKAGE               #\n",
+        paste0("                    #               prefer_RCurl == ", getOption("prefer_RCurl", FALSE) ,
+          if (getOption("prefer_RCurl", FALSE)) " " else "",
+               "            #\n"),
+        paste0("                    #               curl installed? == ", requireNamespace("curl"),
+               if (requireNamespace("curl")) " " else "",
+               "         #\n"),
+        "                    ##################################################\n", sep="")
+    print(paste("curl R package version:", packageVersion("curl")))
+    print(curl::curl_version())
+  } else {
+    cat("                    ##################################################\n",
+        "                    #              USING RCurl PACKAGE               #\n",
+        paste0("                    #              prefer_RCurl == ", getOption("prefer_RCurl", FALSE) ,
+               if (getOption("prefer_RCurl", FALSE)) " " else "",
+               "             #\n"),
+        paste0("                    #              curl installed? == ", requireNamespace("curl"),
+               if (requireNamespace("curl")) " " else "",
+               "          #\n"),
+        "                    ##################################################\n", sep="")
+    print(paste("RCurl R package version:", packageVersion("RCurl")))
+    print(RCurl::curlVersion())
+  }
+  cat("\\-----------------------------------------------------------------------------------------/\n")
+}
+
 doTest<-
 function(testDesc, test) {
+    .print_curl_info()
+    Sys.setenv(
+      "_R_CHECK_LENGTH_1_LOGIC2_" = "verbose",
+      "_R_CHECK_LENGTH_1_CONDITION_" = "verbose"
+    )
     reporter <- MultiReporter$new(list(
         CheckReporter$new(),
         # SummaryReporter$new(),
@@ -793,7 +838,11 @@ compare_arrays <- function(array1, array2, tol=1e-6) {
     expect_equal(dim1, dim2)
 
     for (i in 1:dim1) {
-            expect_equal(TRUE, (abs(array1[i]-array2[i]) < tol))
+            diff <- abs(array1[i]-array2[i])
+            if (diff >= tol) {
+                print(diff)
+            }
+            expect_equal(TRUE, (diff < tol))
     }
 }
 #----------------------------------------------------------------------
@@ -963,18 +1012,21 @@ compareFrames <- function(frame1, frame2, prob=0.5, tolerance=1e-6, enum2String=
   expect_true(nrow(frame1) == nrow(frame2) && ncol(frame1) == ncol(frame2), info="frame1 and frame2 are different in size.")
   rframe1 <- as.data.frame(frame1)
   rframe2 <- as.data.frame(frame2)
+  hNames <- colnames(frame1)
+  cNames <- colnames(rframe1)
   for (colInd in c(1:ncol(frame1))) {
-    notNumericCols = !(h2o.isnumeric(frame1[,colInd]) && h2o.isnumeric(frame2[,colInd]))
+    colName <- cNames[[colInd]]
+    notNumericCols = !(h2o.isnumeric(frame1[hNames[colInd]]))
     if (notNumericCols) {
       if (enum2String) {
-        temp1 <- as.character(rframe1[, colInd])
-        temp2 <- as.character(rframe2[, colInd])
+        temp1 <- as.character(rframe1[,colName])
+        temp2 <- as.character(rframe2[,colInd])
       } else {
-        temp1 <- as.factor(rframe1[, colInd])
-        temp2 <- as.factor(rframe2[, colInd])
+        temp1 <- as.factor(rframe1[,colName])
+        temp2 <- as.factor(rframe2[,colInd])
       }
     } else { 
-      temp1 <- as.numeric(rframe1[,colInd])
+      temp1 <- as.numeric(rframe1[,colName])
       temp2 <- as.numeric(rframe2[,colInd])
     }
     for (rowInd in c(1:nrow(frame1))) {
@@ -1483,4 +1535,15 @@ assertCorrectSkipColumnsNamesTypes <- function(originalFile, parsePath, skippedC
         }
     }
     print("Test completed!")
+}
+
+assertTestJavaScoring <- function(object, frame, predictions, epsilon) {
+  o <- object
+  if( is(o, "H2OModel") ) {
+    isCorrect <- .newExpr("model.testJavaScoring", list(o@model_id, h2o.getId(frame), h2o.getId(predictions), epsilon))[1,1]
+    expect_true(isCorrect == 1)
+  } else {
+    stop( paste0("model.testJavaScoring cannot be called for class ", class(o)) )
+    return(NULL)
+  }
 }

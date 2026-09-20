@@ -3,39 +3,33 @@
 #
 # Copyright 2016 H2O.ai;  Apache License Version 2.0 (see LICENSE for details)
 #
-from __future__ import absolute_import, division, print_function, unicode_literals
 from h2o.utils.compatibility import *  # NOQA
 
 from datetime import datetime
 import inspect
+import time
 import warnings
 
 import h2o
+from h2o import telemetry as _telemetry
 from h2o.base import Keyed
 from h2o.exceptions import H2OValueError, H2OResponseError
 from h2o.frame import H2OFrame
 from h2o.job import H2OJob
 from h2o.utils.mixin import assign, load_ext, mixin
-from h2o.utils.shared_utils import quoted
+from h2o.utils.shared_utils import quoted, LookupSeq
 from h2o.utils.typechecks import assert_is_type, is_type, numeric, FunctionType
-from ..model.autoencoder import H2OAutoEncoderModel
-from ..model.binomial import H2OBinomialModel
-from ..model.binomial_uplift import H2OBinomialUpliftModel
-from ..model.clustering import H2OClusteringModel
-from ..model.dim_reduction import H2ODimReductionModel, H2OTargetEncoderMetrics
-from ..model.metrics_base import (H2OBinomialModelMetrics, H2OClusteringModelMetrics, H2ORegressionModelMetrics,
-                                  H2OMultinomialModelMetrics, H2OAutoEncoderModelMetrics, H2ODimReductionModelMetrics,
-                                  H2OWordEmbeddingModelMetrics, H2OOrdinalModelMetrics, H2OAnomalyDetectionModelMetrics,
-                                  H2OModelMetricsRegressionCoxPH, H2OBinomialUpliftModelMetrics)
-from ..model.model_base import ModelBase
-from ..model.multinomial import H2OMultinomialModel
-from ..model.ordinal import H2OOrdinalModel
-from ..model.regression import H2ORegressionModel
-from ..model.word_embedding import H2OWordEmbeddingModel
-from ..model.anomaly_detection import H2OAnomalyDetectionModel
-from ..model.coxph import H2OCoxPHModel
-from ..model.coxph import H2OCoxPHMojoModel
-from ..model.segment_models import H2OSegmentModels
+from h2o.model import ModelBase, H2OSegmentModels
+from h2o.model.models import *
+from h2o.model.metrics import *
+
+
+def _h2o_version_safe():
+    try:
+        from h2o import __version__ as _v
+        return _v
+    except Exception:
+        return ""
 
 
 class EstimatorAttributeError(AttributeError):
@@ -58,6 +52,7 @@ class H2OEstimator(ModelBase):
     """
     
     supervised_learning = None  # overridden in implementation
+    __default_params = None     # mangled/hidden: use `_default_param_value` to access default param values internally.
 
     def __init__(self):
         super(H2OEstimator, self).__init__()
@@ -96,7 +91,7 @@ class H2OEstimator(ModelBase):
         self._job = None
         model_json = h2o.api("GET /%d/Models/%s" % (self._rest_version, model_key))["models"][0]
         self._resolve_model(model_key, model_json)
-
+    
     def train(self, x=None, y=None, training_frame=None, offset_column=None, fold_column=None,
               weights_column=None, validation_frame=None, max_runtime_secs=None, ignored_columns=None,
               model_id=None, verbose=False):
@@ -115,12 +110,42 @@ class H2OEstimator(ModelBase):
         :param float max_runtime_secs: Maximum allowed runtime in seconds for model training. Use 0 to disable.
         :param bool verbose: Print scoring history to stdout. Defaults to False.
         """
-        parms = self._make_parms(x=x, y=y, training_frame=training_frame, offset_column=offset_column, 
-                                 fold_column=fold_column, weights_column=weights_column, 
-                                 validation_frame=validation_frame, max_runtime_secs=max_runtime_secs, 
+        parms = self._make_parms(x=x, y=y, training_frame=training_frame, offset_column=offset_column,
+                                 fold_column=fold_column, weights_column=weights_column,
+                                 validation_frame=validation_frame, max_runtime_secs=max_runtime_secs,
                                  ignored_columns=ignored_columns, model_id=model_id, verbose=verbose)
-        self._train(parms, verbose=verbose)
-        return self
+        # Time and outcome-track training so telemetry can emit a coarse
+        # algo_train event. Frame dims are read up-front in case training
+        # mutates them; everything is wrapped to never raise.
+        _t_start = time.time()
+        _t_rows = _t_cols = 0
+        try:
+            if isinstance(training_frame, H2OFrame):
+                _t_rows = training_frame.nrow or 0
+                _t_cols = training_frame.ncol or 0
+        except Exception:
+            pass
+        outcome = "ok"
+        try:
+            self._train(parms, verbose=verbose)
+            return self
+        except BaseException:
+            outcome = "error"
+            raise
+        finally:
+            try:
+                if not self._future:
+                    duration_ms = int((time.time() - _t_start) * 1000)
+                    _telemetry.send_algo_train(_h2o_version_safe(),
+                                               algo=getattr(self, "algo", "") or "",
+                                               family=None,
+                                               outcome=outcome,
+                                               duration_ms=duration_ms,
+                                               n_rows=_t_rows,
+                                               n_cols=_t_cols,
+                                               n_models=None)
+            except Exception:
+                pass
 
     def train_segments(self, x=None, y=None, training_frame=None, offset_column=None, fold_column=None,
                        weights_column=None, validation_frame=None, max_runtime_secs=None, ignored_columns=None,
@@ -223,7 +248,7 @@ class H2OEstimator(ModelBase):
                                             required=self._options_.get('requires_training_frame', True) and not has_default_training_frame)
         validation_frame = H2OFrame._validate(validation_frame, 'validation_frame')
         assert_is_type(y, None, int, str)
-        assert_is_type(x, None, int, str, [str, int], {str, int})
+        assert_is_type(x, None, int, str, ModelBase, [str, int], {str, int})
         assert_is_type(ignored_columns, None, [str, int], {str, int})
         assert_is_type(offset_column, None, int, str)
         assert_is_type(fold_column, None, int, str)
@@ -241,7 +266,7 @@ class H2OEstimator(ModelBase):
         if verbose and not self._options_.get('verbose', False):
             raise H2OValueError("Verbose mode is not available for %s" % self.__class__.__name__)
         parms = self._parms.copy()
-        names = training_frame.names if training_frame is not None else []
+        names = LookupSeq(training_frame.names if training_frame is not None else [])
         ncols = training_frame.ncols if training_frame is not None else 0
         types = training_frame.types if training_frame is not None else {}
     
@@ -280,7 +305,9 @@ class H2OEstimator(ModelBase):
                             raise H2OValueError("Column %s not in the training frame" % ic)
                         ignored_columns_set.add(ic)
             if x is None:
-                xset = set(names) - {y} - ignored_columns_set
+                xset = names.set() - {y} - ignored_columns_set
+            elif isinstance(x, ModelBase) and hasattr(x, '_extract_x_from_model'):
+                xset = x._extract_x_from_model()
             else:
                 xset = set()
                 if is_type(x, int, str): x = [x]
@@ -321,8 +348,8 @@ class H2OEstimator(ModelBase):
         if len(x) > 0 and is_type(x[0], int):
             x = [names[i] for i in x]
         if override_default_training_frame:
-            ignored_columns = list(set(names) - set(x + [y, offset, folds, weights]))
-            parms["ignored_columns"] = None if ignored_columns == [] else [quoted(col) for col in ignored_columns]
+            ignored_columns = list(names.set() - set(x + [y, offset, folds, weights]))
+            parms["ignored_columns"] = None if len(ignored_columns) == 0 else [quoted(col) for col in ignored_columns]
         parms["interactions"] = (None if "interactions" not in parms or parms["interactions"] is None
                                  else [quoted(col) for col in parms["interactions"]])
         parms["interaction_pairs"] = (None if "interaction_pairs" not in parms or parms["interaction_pairs"] is None
@@ -334,7 +361,7 @@ class H2OEstimator(ModelBase):
     
         parms = {k: H2OEstimator._keyify(v) for k, v in parms.items()}
         if "r2" in (parms.get('stopping_metric') or []):
-            raise H2OValueError("r2 cannot be used as an early stopping_metric yet.  Check this JIRA https://0xdata.atlassian.net/browse/PUBDEV-5381 for progress.")
+            raise H2OValueError("r2 cannot be used as an early stopping_metric yet.  Check this issue https://github.com/h2oai/h2o-3/issues/12248 for progress.")
         return parms
 
     def _get_rest_version(self, parms):
@@ -385,16 +412,14 @@ class H2OEstimator(ModelBase):
         if model_id is not None and model_json is not None and metrics_class is not None:
             # build Metric objects out of each metrics
             for metric in ["training_metrics", "validation_metrics", "cross_validation_metrics"]:
-                if metric in model_json["output"]:
-                    if model_json["output"][metric] is not None:
-                        if metric == "cross_validation_metrics":
-                            m._is_xvalidated = True
-                        # for Isolation Forest, validation metrics might have a different metric class
-                        mc = metrics_class_valid if metric == "validation_metrics" else metrics_class  
-                        model_json["output"][metric] = \
-                            mc(model_json["output"][metric], metric, model_json["algo"])
-
-            #if m._is_xvalidated:
+                metrics = model_json["output"].get(metric, None)
+                if metrics is not None:
+                    if metric == "cross_validation_metrics":
+                        m._is_xvalidated = True
+                    mc = metrics_class_valid if metric == "validation_metrics" else metrics_class  
+                    # fixme: never ever ever modify the original payload!!! put the metric object somewhere else
+                    model_json["output"][metric] = mc(metrics, metric, model_json["algo"])
+            # if m._is_xvalidated:
             if m._is_xvalidated and model_json["output"]["cross_validation_models"] is not None:
                 m._xval_keys = [i["name"] for i in model_json["output"]["cross_validation_models"]]
 
@@ -406,7 +431,7 @@ class H2OEstimator(ModelBase):
         mixin(self._model, model_class, *extensions)
         assign(self._model, m)
 
-    #------ Scikit-learn Interface Methods -------
+    # ----- Scikit-learn Interface Methods -------
 
     def fit(self, X, y=None, **params):
         """
@@ -492,23 +517,26 @@ class H2OEstimator(ModelBase):
             metrics_class = H2OOrdinalModelMetrics
             model_class = H2OOrdinalModel
         elif model_type == "AutoEncoder":
-            metrics_class = H2OAutoEncoderModelMetrics
+            metrics_class = H2ODefaultModelMetrics
             model_class = H2OAutoEncoderModel
         elif model_type == "DimReduction":
             metrics_class = H2ODimReductionModelMetrics
             model_class = H2ODimReductionModel
         elif model_type == "WordEmbedding":
-            metrics_class = H2OWordEmbeddingModelMetrics
+            metrics_class = H2ODefaultModelMetrics
             model_class = H2OWordEmbeddingModel
         elif model_type == "AnomalyDetection":
             metrics_class = H2OAnomalyDetectionModelMetrics
             valid_metrics_class = H2OBinomialModelMetrics
             model_class = H2OAnomalyDetectionModel
         elif model_type == "CoxPH":
-            metrics_class = H2OModelMetricsRegressionCoxPH
+            metrics_class = H2ORegressionCoxPHModelMetrics
             model_class = H2OCoxPHModel if model_json["algo"] != "generic" else H2OCoxPHMojoModel
         elif model_type == "TargetEncoder":
-            metrics_class = H2OTargetEncoderMetrics
+            metrics_class = H2ODefaultModelMetrics 
+            model_class = None
+        elif model_type == "Unknown":
+            metrics_class = None
             model_class = None
         else:
             raise NotImplementedError(model_type)
@@ -519,12 +547,23 @@ class H2OEstimator(ModelBase):
     def _check_and_save_parm(self, parms, parameter_name, parameter_value):
         """
         If a parameter is not stored in parms dict save it there (even though the value is None).
-        Else check if the parameter has been already set during initialization of estimator. If yes, check the new value is the same or not. If the values are different, set the last passed value to params dict and throw UserWarning.
+        Else check if the parameter has been already set during initialization of estimator. 
+            If yes, check the new value is the same or not.
+            If the values are different, set the last passed value to params dict and throw UserWarning.
         """
         if parameter_name not in parms:
             parms[parameter_name] = parameter_value
         elif parameter_value is not None and parms[parameter_name] != parameter_value:
+            prev_value = parms[parameter_name]
             parms[parameter_name] = parameter_value
-            warnings.warn("\n\n\t`%s` parameter has been already set and had a different value in `train` method. The last passed value \"%s\" is used." % (parameter_name, parameter_value), UserWarning, stacklevel=2)
+            if prev_value != self._default_param_value(parameter_name):
+                warnings.warn("\n\n\t`%s` parameter has been already set and had a different value in `train` method."
+                              " The last passed value \"%s\" is used." % (parameter_name, parameter_value), 
+                              UserWarning, 
+                              stacklevel=4)  # warning should refer to the original call to `train`, `train_xxx`
 
-
+    @classmethod
+    def _default_param_value(cls, param_name):
+        if cls.__default_params is None:
+            cls.__default_params = cls()
+        return getattr(cls.__default_params, param_name)

@@ -3,10 +3,13 @@ package hex.rulefit;
 import hex.genmodel.algos.tree.SharedTreeNode;
 import hex.genmodel.algos.tree.SharedTreeSubgraph;
 import hex.tree.SharedTreeModel;
+import org.apache.commons.math3.util.Precision;
 import water.Iced;
 import water.fvec.Chunk;
 
+import java.math.BigDecimal;
 import java.util.*;
+import java.util.stream.Collectors;
 
 public class Rule extends Iced {
     
@@ -15,25 +18,28 @@ public class Rule extends Iced {
     String languageRule;
     double coefficient;
     String varName;
+    double support;
 
     public Rule(Condition[] conditions, double predictionValue, String varName) {
         this.conditions = conditions;
         this.predictionValue = predictionValue;
         this.varName = varName;
-        this.languageRule = generateLanguageRule();
-        
     }
 
-    public Rule(Condition[] conditions, double predictionValue, String varName,  double coefficient) {
+    public Rule(Condition[] conditions, double predictionValue, String varName,  double coefficient, double support) {
         this.conditions = conditions;
         this.predictionValue = predictionValue;
         this.varName = varName; 
         this.coefficient = coefficient;
-        this.languageRule = generateLanguageRule();
+        this.support = support;
     }
 
     public void setCoefficient(double coefficient) {
         this.coefficient = coefficient;
+    }
+
+    public void setVarName(String varName) {
+        this.varName = varName;
     }
 
     String generateLanguageRule() {
@@ -41,7 +47,7 @@ public class Rule extends Iced {
         if (!this.varName.startsWith("linear.")) {
             for (int i = 0; i < conditions.length; i++) {
                 if (i != 0) languageRule.append(" & ");
-                languageRule.append(conditions[i].languageCondition);
+                languageRule.append(conditions[i].constructLanguageCondition());
             }
         }
         return languageRule.toString();
@@ -52,19 +58,50 @@ public class Rule extends Iced {
             c.map(cs, out);
         }
     }
-    
+
+    // two non-linear rules are considered equal when they have the same condition but can differ in varname/pred value/coefficient
+    // two linear rules (conditions == null) are considered equal when they have the same varname
     @Override
-    public int hashCode() {
-        int hashCode = 0;
-        for (int i = 0; i < conditions.length; i++) {
-            hashCode += conditions[i].hashCode();
+    public boolean equals(Object obj) {
+        if (!(obj instanceof Rule))
+            return false;
+
+        Rule rule = (Rule) obj;
+        if (this.conditions == null && rule.conditions == null) {
+            if (this.varName == rule.varName) {
+                return true;
+            }
+            return false;
         }
-        return hashCode;
+        if ((this.conditions == null && rule.conditions != null) || (this.conditions != null && rule.conditions == null)) {
+            return false;
+        }
+        if (!Arrays.asList(rule.conditions).containsAll(Arrays.asList(conditions))) {
+            return false;
+        }
+
+        return Math.abs(this.support - rule.support) < 1e-5;
     }
 
     @Override
-    public boolean equals(Object obj) {
-        return this.hashCode() == obj.hashCode();
+    public int hashCode() {
+        int result = Objects.hash(Precision.round(support, 5, BigDecimal.ROUND_HALF_UP));
+
+        if (conditions != null) {
+            Condition[] sorted = Arrays.asList(conditions).stream().sorted(
+                    Comparator.comparing(Condition::getFeatureIndex)
+                            .thenComparing(Condition::isNAsIncluded)
+                            .thenComparing(Condition::getType)
+                            .thenComparing(Condition::getOperator)
+                            .thenComparing(Condition::getNumCatTreshold)
+                            .thenComparing(Condition::getNumTreshold)
+            ).collect(Collectors.toList()).toArray(new Condition[0]);
+
+            result = 31 * result + Arrays.hashCode(sorted);
+        } else {
+            result = 31 * result + varName.hashCode();
+        }
+        return result;
     }
 
     public static List<Rule> extractRulesListFromModel(SharedTreeModel model, int modelId, int nclasses) {
@@ -85,43 +122,60 @@ public class Rule extends Iced {
     
     public static Set<Rule> extractRulesFromTree(SharedTreeSubgraph tree, int modelId, String classString) {
         Set<Rule> rules = new HashSet<>();
-        List<Condition> conditions = new ArrayList<>();
-        traverseNodes(tree.rootNode, conditions, rules, null, modelId, classString);
-        return rules;
-    }
-    
-    private static void traverseNodes(SharedTreeNode node, List<Condition> conditions, Set<Rule> rules, Condition conditionToAdd, int modelId, String classString) {
-        if (conditionToAdd != null) {
-            conditions.add(conditionToAdd);
-        }
-        
-        if (node.isLeaf()) {
-            // create Rule
-            String varName = "M" + modelId + "T" + node.getSubgraphNumber() + "N" + node.getNodeNumber();
+        // filter leaves
+        List<SharedTreeNode> leaves = tree.nodesArray.stream().filter(sharedTreeNode -> sharedTreeNode.isLeaf()).collect(Collectors.toList());
+        // traverse paths
+        for (SharedTreeNode leaf : leaves) {
+            String varName = "M" + modelId + "T" + leaf.getSubgraphNumber() + "N" + leaf.getNodeNumber();
             if (classString != null) {
                 varName += classString;
             }
-            rules.add(new Rule(conditions.toArray(new Condition[]{}), node.getPredValue(), varName));
+            traversePath(leaf, rules, varName, leaf.getPredValue());
+        }
+        return rules;
+    }
+    
+    private static void traversePath(SharedTreeNode node, List<Condition> conditions, Set<Rule> rules, String varName, double predValue) {
+        SharedTreeNode parent = node.getParent();
+        if (parent == null) {
+            conditions = conditions.stream().sorted(Comparator.comparing(condition -> condition.featureName)).collect(Collectors.toList());
+            rules.add(new Rule(conditions.toArray(new Condition[]{}), predValue, varName));
         } else {
-            // traverse
-            int colId = node.getColId();
-            String colName = node.getColName();
-            
-            if (node.getDomainValues() == null) {
-                float splitValue = node.getSplitValue();
-                traverseNodes(node.getRightChild(), new ArrayList<>(conditions), rules, 
-                        new Condition(colId, Condition.Type.Numerical, Condition.Operator.GreaterThanOrEqual, splitValue, null, null, colName, node.getRightChild().isInclusiveNa()), modelId, classString);
-                traverseNodes(node.getLeftChild(), new ArrayList<>(conditions), rules,
-                        new Condition(colId, Condition.Type.Numerical, Condition.Operator.LessThan, splitValue, null, null, colName, node.getLeftChild().isInclusiveNa()), modelId, classString);
+            Condition actualCondition;
+            Condition newCondition;
+            String featureName = parent.getColName();
+            int colId = parent.getColId();
+            if (node.getInclusiveLevels() != null && parent.getDomainValues() != null) {
+                // categorical condition
+                actualCondition = getConditionByFeatureNameAndOperator(conditions, parent.getColName(), Condition.Operator.In);
+                CategoricalThreshold categoricalThreshold = extractCategoricalThreshold(node.getInclusiveLevels(), parent.getDomainValues());
+                newCondition = new Condition(colId, Condition.Type.Categorical, Condition.Operator.In, -1, categoricalThreshold.catThreshold, categoricalThreshold.catThresholdNum, featureName, node.isInclusiveNa());
+                
             } else {
-                String[] domainValues = node.getDomainValues();
-                CategoricalThreshold rightCategoricalThreshold = extractCategoricalThreshold(node.getRightChild().getInclusiveLevels(), domainValues);
-                traverseNodes(node.getRightChild(), new ArrayList<>(conditions), rules, 
-                        new Condition(colId, Condition.Type.Categorical, Condition.Operator.In, -1, rightCategoricalThreshold.catThreshold, rightCategoricalThreshold.catThresholdNum, colName, node.getRightChild().isInclusiveNa()), modelId, classString);
-                CategoricalThreshold leftCategoricalThreshold = extractCategoricalThreshold(node.getLeftChild().getInclusiveLevels(), domainValues);
-                traverseNodes(node.getLeftChild(), new ArrayList<>(conditions), rules,
-                        new Condition(colId, Condition.Type.Categorical, Condition.Operator.In, -1, leftCategoricalThreshold.catThreshold, leftCategoricalThreshold.catThresholdNum, colName, node.getLeftChild().isInclusiveNa()), modelId, classString);
+                float splitValue = parent.getSplitValue();
+                Condition.Operator operator = parent.getLeftChild().equals(node) ? Condition.Operator.LessThan : Condition.Operator.GreaterThanOrEqual;
+                actualCondition = getConditionByFeatureNameAndOperator(conditions, parent.getColName(), operator);
+                newCondition = new Condition(colId, Condition.Type.Numerical, operator, splitValue, null, null, featureName, node.isInclusiveNa());
             }
+            if (actualCondition == null ) {
+                conditions.add(newCondition);
+            } else {
+                actualCondition = actualCondition.expandBy(newCondition);
+            }
+            traversePath(node.getParent(), conditions, rules, varName, predValue);
+        }
+    }
+
+    private static void traversePath(SharedTreeNode node, Set<Rule> rules, String varName, double predValue) {
+        traversePath(node, new ArrayList<>(), rules, varName, predValue);
+    }
+    
+    private static Condition getConditionByFeatureNameAndOperator(List<Condition> conditions, String featureName, Condition.Operator operator) {
+        List<Condition> filteredConditions = conditions.stream().filter(condition -> condition.featureName.equals(featureName) && condition.operator.equals(operator)).collect(Collectors.toList());
+        if (filteredConditions.size() != 0) {
+            return filteredConditions.get(0);
+        } else {
+            return null;
         }
     }
     

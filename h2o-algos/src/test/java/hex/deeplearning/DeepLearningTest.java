@@ -9,6 +9,7 @@ import hex.genmodel.utils.DistributionFamily;
 import hex.deeplearning.DeepLearningModel.DeepLearningParameters;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
+import org.junit.runner.RunWith;
 import water.*;
 import water.exceptions.H2OIllegalArgumentException;
 import water.exceptions.H2OModelBuilderIllegalArgumentException;
@@ -18,6 +19,8 @@ import water.fvec.NFSFileVec;
 import water.fvec.Vec;
 import water.parser.ParseDataset;
 import water.parser.ParseSetup;
+import water.runner.CloudSize;
+import water.runner.H2ORunner;
 import water.util.*;
 
 import java.io.File;
@@ -33,9 +36,12 @@ import java.util.concurrent.Future;
 import static hex.genmodel.utils.DistributionFamily.*;
 import static junit.framework.TestCase.assertTrue;
 import static org.junit.Assert.*;
+import static water.TestUtil.*;
 
-public class DeepLearningTest extends TestUtil {
-  @BeforeClass public static void stall() { stall_till_cloudsize(1); }
+
+@RunWith(H2ORunner.class)
+@CloudSize(1)
+public class DeepLearningTest {
 
   @Rule
   public transient TemporaryFolder tmp = new TemporaryFolder();
@@ -2001,7 +2007,7 @@ public class DeepLearningTest extends TestUtil {
 
       dl = new DeepLearning(parms).trainModel().get();
 
-      Assert.assertEquals(6.4964976811,((ModelMetricsRegression)dl._output._training_metrics)._mean_residual_deviance,1e-5);
+      Assert.assertEquals(8.542106186915872,((ModelMetricsRegression)dl._output._training_metrics)._mean_residual_deviance,1e-5);
 
       // the same for distribution = AUTO representing Huber:
       DeepLearningParameters parms2 = new DeepLearningParameters();
@@ -2015,7 +2021,7 @@ public class DeepLearningTest extends TestUtil {
 
       dl2 = new DeepLearning(parms2).trainModel().get();
 
-      Assert.assertEquals(6.4964976811,((ModelMetricsRegression)dl2._output._training_metrics)._mean_residual_deviance,1e-5);
+      Assert.assertEquals(8.542106186915872,((ModelMetricsRegression)dl2._output._training_metrics)._mean_residual_deviance,1e-5);
 
     } finally {
       if (tfr != null) tfr.delete();
@@ -2213,12 +2219,12 @@ public class DeepLearningTest extends TestUtil {
 
       dl = new DeepLearning(parms).trainModel().get();
 
-      Assert.assertEquals(87.26206135855, ((ModelMetricsRegression)dl._output._training_metrics)._mean_residual_deviance,1e-4);
-      Assert.assertEquals(87.26206135855, ((ModelMetricsRegression)dl._output._validation_metrics)._mean_residual_deviance,1e-4);
-      Assert.assertEquals(117.8014, ((ModelMetricsRegression)dl._output._cross_validation_metrics)._mean_residual_deviance,1e-4);
+      Assert.assertEquals(122.15905123948743, ((ModelMetricsRegression)dl._output._training_metrics)._mean_residual_deviance,1e-4);
+      Assert.assertEquals(122.15905123948743, ((ModelMetricsRegression)dl._output._validation_metrics)._mean_residual_deviance,1e-4);
+      Assert.assertEquals(165.93781670012774, ((ModelMetricsRegression)dl._output._cross_validation_metrics)._mean_residual_deviance,1e-4);
 
       int mean_residual_deviance_row = Arrays.binarySearch(dl._output._cross_validation_metrics_summary.getRowHeaders(), "mean_residual_deviance");
-      Assert.assertEquals(117.8014, (Float)dl._output._cross_validation_metrics_summary.get(mean_residual_deviance_row,0), 1);
+      Assert.assertEquals(165.93781670012774, (Float)dl._output._cross_validation_metrics_summary.get(mean_residual_deviance_row,0), 1);
 
       // the same for distribution = AUTO representing Huber:
       DeepLearningParameters parms2 = new DeepLearningParameters();
@@ -2235,9 +2241,9 @@ public class DeepLearningTest extends TestUtil {
 
       dl2 = new DeepLearning(parms2).trainModel().get();
 
-      Assert.assertEquals(87.26206135855, ((ModelMetricsRegression)dl2._output._training_metrics)._mean_residual_deviance,1e-4);
-      Assert.assertEquals(87.26206135855, ((ModelMetricsRegression)dl2._output._validation_metrics)._mean_residual_deviance,1e-4);
-      Assert.assertEquals(117.8014, ((ModelMetricsRegression)dl2._output._cross_validation_metrics)._mean_residual_deviance,1e-4);
+      Assert.assertEquals(122.15905123948743, ((ModelMetricsRegression)dl2._output._training_metrics)._mean_residual_deviance,1e-4);
+      Assert.assertEquals(122.15905123948743, ((ModelMetricsRegression)dl2._output._validation_metrics)._mean_residual_deviance,1e-4);
+      Assert.assertEquals(165.93781670012774, ((ModelMetricsRegression)dl2._output._cross_validation_metrics)._mean_residual_deviance,1e-4);
 
     } finally {
       if (tfr != null) tfr.remove();
@@ -2328,7 +2334,7 @@ public class DeepLearningTest extends TestUtil {
       model = new DeepLearning(p).trainModel().get();
 
       preds = model.score(train);
-      preds.remove(0); //remove label, keep only probs
+      preds.remove(0).remove(); //remove label, keep only probs
       Vec labels = train.vec("pclass"); //actual
       String[] fullDomain = train.vec("pclass").domain(); //actual
 

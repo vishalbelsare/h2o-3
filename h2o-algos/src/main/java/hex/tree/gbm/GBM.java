@@ -3,7 +3,6 @@ package hex.tree.gbm;
 import hex.*;
 import hex.genmodel.MojoModel;
 import hex.genmodel.algos.gbm.GbmMojoModel;
-import hex.genmodel.algos.tree.SharedTreeMojoModel;
 import hex.genmodel.utils.DistributionFamily;
 import hex.quantile.Quantile;
 import hex.quantile.QuantileModel;
@@ -17,6 +16,7 @@ import water.exceptions.H2OModelBuilderIllegalArgumentException;
 import water.fvec.*;
 import water.util.*;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -32,6 +32,8 @@ import static hex.util.LinearAlgebraUtils.toEigenArray;
 public class GBM extends SharedTree<GBMModel,GBMModel.GBMParameters,GBMModel.GBMOutput> {
 
   private static final Logger LOG = Logger.getLogger(GBM.class);
+  
+  
   
   @Override public ModelCategory[] can_build() {
     return new ModelCategory[]{
@@ -189,6 +191,16 @@ public class GBM extends SharedTree<GBMModel,GBMModel.GBMParameters,GBMModel.GBM
 
     if ((_train != null) && (_parms._monotone_constraints != null)) {
       TreeUtils.checkMonotoneConstraints(this, _train, _parms._monotone_constraints);
+    }
+    
+    if ((_train != null) && (_parms._interaction_constraints != null)) {
+      if(_parms._categorical_encoding != Model.Parameters.CategoricalEncodingScheme.AUTO && _parms._categorical_encoding != Model.Parameters.CategoricalEncodingScheme.OneHotInternal){
+        error("_categorical_encoding", "Interaction constraints can be used when the categorical encoding is set to ``AUTO`` (``one_hot_internal`` or ``OneHotInternal``) only.");
+      }
+      TreeUtils.checkInteractionConstraints(this, _train, _parms._interaction_constraints);
+      if (error_count() == 0) {
+        _ics = _parms.interactionConstraints(_train);
+      }
     }
   }
   
@@ -490,7 +502,12 @@ public class GBM extends SharedTree<GBMModel,GBMModel.GBMParameters,GBMModel.GBM
       // One Big Loop till the ktrees are of proper depth.
       // Adds a layer to the trees each pass.
       Constraints cs = _parms.constraints(_train);
-      growTrees(ktrees, leaves, _rand, cs);
+      // Initialize branch interaction constraints
+      BranchInteractionConstraints bics = null;
+      if(_parms._interaction_constraints != null) {
+        bics = _parms.initialInteractionConstraints(_ics);
+      }
+      growTrees(ktrees, leaves, _rand, cs, bics);
       for (int k = 0; k < _nclass; k++) {
         if (LOG.isTraceEnabled() && ktrees[k]!=null) {
           LOG.trace("Grew trees. Updated NIDs for class " + k + ":\n" + new Frame(new String[]{"NIDS"},new Vec[]{vec_nids(_train, k)}).toTwoDimTable());
@@ -561,7 +578,8 @@ public class GBM extends SharedTree<GBMModel,GBMModel.GBMParameters,GBMModel.GBM
         }
         if (converged) {
           LOG.warn("Model cannot be further improved by building more trees, " +
-                  "stopping with ntrees=" + _model._output._ntrees + ".");
+                  "stopping with ntrees=" + _model._output._ntrees + ". Setting actual ntrees to the " + _model._output._ntrees+".");
+          _parms._ntrees = _model._output._ntrees;
           return true;
         }
       }
@@ -587,7 +605,7 @@ public class GBM extends SharedTree<GBMModel,GBMModel.GBMParameters,GBMModel.GBM
      * @param leaves workspace to store the leaf node starting index (k-dimensional - one per tree)
      * @param rand PRNG for reproducibility
      */
-    private void growTrees(DTree[] ktrees, int[] leaves, Random rand, Constraints cs) {
+    private void growTrees(DTree[] ktrees, int[] leaves, Random rand, Constraints cs, BranchInteractionConstraints bics) {
       // Initial set of histograms.  All trees; one leaf per tree (the root
       // leaf); all columns
       DHistogram hcs[][][] = new DHistogram[_nclass][1/*just root leaf*/][_ncols];
@@ -601,8 +619,8 @@ public class GBM extends SharedTree<GBMModel,GBMModel.GBMParameters,GBMModel.GBM
         // Initially setup as-if an empty-split had just happened
         if (_model._output._distribution[k] != 0) {
           ktrees[k] = new DTree(_train, _ncols, _mtry, _mtry_per_tree, rseed, _parms);
-          DHistogram[] hist = DHistogram.initialHist(_train, _ncols, adj_nbins, hcs[k][0], rseed, _parms, getGlobalQuantilesKeys(), cs, false);
-          new UndecidedNode(ktrees[k], DTree.NO_PARENT, hist, cs); // The "root" node
+          DHistogram[] hist = DHistogram.initialHist(_train, _ncols, adj_nbins, hcs[k][0], rseed, _parms, getGlobalSplitPointsKeys(), cs, false, _ics);
+          new UndecidedNode(ktrees[k], DTree.NO_PARENT, hist, cs, bics); // The "root" node
         }
       }
 
@@ -764,6 +782,7 @@ public class GBM extends SharedTree<GBMModel,GBMModel.GBMParameters,GBMModel.GBM
           LeafNode node = (LeafNode)tree.node(i);
           int quantileId = i - dnSize;
           double leafQuantile = sqt._quantiles[quantileId];
+          if (Double.isNaN(leafQuantile)) continue; // quantile can be NaN if CV or weights column is enabled
           boolean canBeReplaced = true;
           DTree.Node tmpNode = tree.node(i);
           while(tmpNode.pid() != DTree.NO_PARENT) {
@@ -899,6 +918,20 @@ public class GBM extends SharedTree<GBMModel,GBMModel.GBMParameters,GBMModel.GBM
       return new GBMModel(modelKey, parms, new GBMModel.GBMOutput(GBM.this));
     }
 
+    @Override
+    protected void doInTrainingCheckpoint() {
+      try {
+        String modelFile = _parms._in_training_checkpoints_dir + "/" + _model._key.toString() + ".ntrees_" + _model._output._ntrees;
+        GBMModel modelClone = _model.clone();
+        modelClone.setInputParms(_parms);
+        modelClone._key = Key.make(_model._key + "." +  _model._output._ntrees);
+        modelClone._output = (GBMModel.GBMOutput) _model._output.clone();
+        modelClone._output.changeModelMetricsKey(modelClone._key);
+        modelClone.exportBinaryModel(modelFile, true);
+      } catch (IOException e) {
+        throw new RuntimeException("Failed to write GBM checkpoint" + _model._key.toString(), e);
+      }
+    }
   }
 
 
@@ -1490,4 +1523,8 @@ public class GBM extends SharedTree<GBMModel,GBMModel.GBMParameters,GBMModel.GBM
             LinkFunctionFactory.getLinkFunction(gbmMojoModel._link_function));
   }
 
+  @Override
+  protected void raiseReproducibilityWarning(String datasetName, int chunks) {
+    warn("auto_rebalance", "Rebalancing " + datasetName  + " dataset into " + chunks + " chunks. This model won't be reproducible on the different hardware configuration.");
+  }
 }

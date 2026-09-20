@@ -13,7 +13,7 @@ public class AtomicTest extends TestUtil {
     H2O cloud = H2O.CLOUD;
     H2ONode target = cloud._memary[0];
     if( target == H2O.SELF ) target = cloud._memary[1];
-    return Key.make(n,(byte)1,Key.BUILT_IN_KEY,true,target);
+    return Key.make(n,Key.BUILT_IN_KEY,true,target);
   }
 
   // Simple wrapper class defining an array-of-keys that is serializable.
@@ -69,7 +69,7 @@ public class AtomicTest extends TestUtil {
     Random r = new Random(1234567890123456789L);
     int total = 0;
     while( total < AutoBuffer.MTU*8 ) {
-      byte[] kb = new byte[Key.KEY_LENGTH];
+      byte[] kb = new byte[512];
       r.nextBytes(kb);
       Key nk = Key.make(kb);
       Append.append(k,nk);

@@ -7,6 +7,7 @@ import water.util.ArrayUtils;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 
 import static water.util.ArrayUtils.findLongestCommonPrefix;
 
@@ -34,7 +35,7 @@ public class DataInfo extends Keyed<DataInfo> {
   }
 
   public void dropWeights() {
-    if(!_weights)return;
+    if(!_weights) return;
     _adaptedFrame.remove(weightChunkId());
     _weights = false;
   }
@@ -372,7 +373,7 @@ public class DataInfo extends Keyed<DataInfo> {
 
   public double[] denormalizeBeta(double [] beta) {
     int N = fullN()+1;
-    assert (beta.length % N) == 0:"beta len = " + beta.length + " expected multiple of" + N;
+    assert (beta.length % N) == 0:"beta len = " + beta.length + " expected multiple of " + N;
     int nclasses = beta.length/N;
     beta = MemoryManager.arrayCopyOf(beta,beta.length);
     if (_predictor_transform == DataInfo.TransformType.STANDARDIZE) {
@@ -823,12 +824,11 @@ public class DataInfo extends Keyed<DataInfo> {
     return res;
   }
 
-  public final int[] coefOriginalColumnIndices() {
-    if (_coefOriginalIndices != null) return _coefOriginalIndices; // already computed
+  public final int[] coefOriginalColumnIndices(Frame adaptedFrame) {
     int k = 0;
     final int n = fullN(); // total number of columns to compute
     int[] res = new int[n];
-    final Vec [] vecs = _adaptedFrame.vecs();
+    final Vec [] vecs = adaptedFrame.vecs();
 
     // first do all of the expanded categorical names
     for(int i = 0; i < _cats; ++i) {
@@ -868,19 +868,32 @@ public class DataInfo extends Keyed<DataInfo> {
           res[k++] = i+_cats;
       }
     }
-    _coefOriginalIndices = res;
+    if (null != _adaptedFrame && Objects.equals(_adaptedFrame._key, adaptedFrame._key))
+      _coefOriginalIndices = res;
     return res;
   }
+  
+  public final int[] coefOriginalColumnIndices() {
+    if (_coefOriginalIndices != null) return _coefOriginalIndices; // already computed
+    return coefOriginalColumnIndices(_adaptedFrame);
+  }
 
-  public final String[] coefOriginalNames() {
-    int[] coefOriginalIndices = coefOriginalColumnIndices();
-    String[] originalNames = new String[coefOriginalIndices[coefOriginalIndices.length - 1]];
+  public final String[] coefOriginalNames(Frame adaptedFrame) {
+    int[] coefOriginalIndices = coefOriginalColumnIndices(adaptedFrame);
+    String[] originalNames = new String[coefOriginalIndices[coefOriginalIndices.length - 1] + 1]; //needs +1 since we have 0 based indexing so if we have index N we need to have N+1 elements
     int i = 0, j = 0;
     while (i < coefOriginalIndices.length && j < originalNames.length) {
       List<Integer> coefOriginalIndicesList = new ArrayList<>(coefOriginalIndices.length);
       for (int value : coefOriginalIndices) coefOriginalIndicesList.add(value);
       int end = coefOriginalIndicesList.lastIndexOf(coefOriginalIndices[i]);
       String prefix = findLongestCommonPrefix(Arrays.copyOfRange(coefNames(), i, end + 1));
+      if (end > i) { // categorical variable
+        // Let's hope levels in this categorical variable don't have common prefix with '.'
+        // We know that we encode cat. vars as "variable_name.level" so we know that the prefix should end
+        // with ".". So make sure it's the case otherwise this can break on categorical variables like "pclass" in titanic
+        // dataset where every level starts with "Class " which leads to "pclass.Class " as the original name
+        prefix = prefix.substring(0, prefix.lastIndexOf("."));
+      }
       if (".".equals(prefix.substring(prefix.length() - 1))) {
         prefix = prefix.substring(0, prefix.length() - 1);
       }
@@ -889,6 +902,10 @@ public class DataInfo extends Keyed<DataInfo> {
       j++;
     }
     return originalNames;
+  }
+  
+  public final String[] coefOriginalNames() {
+    return coefOriginalNames(_adaptedFrame);
   }
 
   // Return permutation matrix mapping input names to adaptedFrame colnames
@@ -1061,24 +1078,6 @@ public class DataInfo extends Keyed<DataInfo> {
       return res;
     }
 
-    /***
-     * For HGLM, will perform multiplication of w*data part and not the random columns.
-     * @param w
-     * @param rowContent
-     * @param catOffsets
-     * @return
-     */
-    public double[] scalarProduct(double w, double[] rowContent, int catOffsets) { // multiple a row with scaler w
-      rowContent[0] = w;  // intercept term
-      for (int i = 0; i < nBins; ++i) {
-        rowContent[binIds[i]+1] = w;  // value is absolute
-      }
-
-      for (int i = 0; i < numVals.length; ++i)
-        rowContent[i+catOffsets+1] += numVals[i]*w;
-
-      return rowContent;
-    }
     public final double twoNormSq() {
       assert !_intercept;
       assert numIds == null;
@@ -1092,10 +1091,18 @@ public class DataInfo extends Keyed<DataInfo> {
 
     public double[] expandCats() {
       if(isSparse() || _responses > 0) throw H2O.unimpl();
+      return expandCatsPredsOnly(null);
+    }
+
+    public double[] expandCatsPredsOnly(double[] res) {
+      if(isSparse()) throw H2O.unimpl();
 
       int N = fullN();
       int numStart = numStart();
-      double[] res = new double[N + (_intercept ? 1:0)];
+      if (res == null)
+        res = new double[N + (_intercept ? 1:0)];
+      else
+        Arrays.fill(res, 0);
 
       for(int i = 0; i < nBins; ++i)
         res[binIds[i]] = 1;

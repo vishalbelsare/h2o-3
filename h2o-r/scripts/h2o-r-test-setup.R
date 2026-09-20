@@ -2,7 +2,6 @@
 .origEchoValue <- getOption("echo")
 options(echo=FALSE)
 options(scipen=999)
-options(stringsAsFactors=T)
 
 #'
 #'
@@ -182,15 +181,35 @@ function() {
         strict_version_check <- TRUE
     } else if (IS.RUNIT) {
         # source h2o-r/h2o-package/R. overrides h2o package load
-        to_src <- c("aggregator.R", "classes.R", "connection.R","config.R", "constants.R", "logging.R", "communication.R",
-                    "kvstore.R", "frame.R", "targetencoder.R", "astfun.R","automl.R", "import.R", "parse.R", "export.R", "models.R", "edicts.R",
-                    "coxph.R", "coxphutils.R", "gbm.R", "glm.R", "gam.R", "anovaglm.R", "glrm.R", "kmeans.R", "deeplearning.R", "randomforest.R", "generic.R",
-                    "naivebayes.R", "pca.R", "svd.R", "locate.R", "grid.R", "word2vec.R", "w2vutils.R", "stackedensemble.R", "rulefit.R", "maxrglm.R",
-                    "predict.R", "xgboost.R", "isolationforest.R", "psvm.R", "segment.R", "tf-idf.R", "explain.R", "permutation_varimp.R", "extendedisolationforest.R",
-                    "upliftrandomforest.R")
-        src_path <- paste(h2oRDir,"h2o-package","R",sep=.Platform$file.sep)
-        invisible(lapply(to_src,function(x){source(paste(src_path, x, sep = .Platform$file.sep))}))
+        # to_src <- c("aggregator.R", "classes.R", "connection.R","config.R", "constants.R", "logging.R", "communication.R",
+        #             "kvstore.R", "frame.R", "targetencoder.R", "astfun.R","automl.R", "import.R", "parse.R", "export.R", "models.R", "edicts.R",
+        #             "coxph.R", "coxphutils.R", "gbm.R", "glm.R", "gam.R", "anovaglm.R", "glrm.R", "kmeans.R", "deeplearning.R", "randomforest.R", "generic.R",
+        #             "naivebayes.R", "pca.R", "svd.R", "locate.R", "grid.R", "word2vec.R", "w2vutils.R", "stackedensemble.R", "rulefit.R", "modelselection.R",
+        #             "predict.R", "xgboost.R", "isolationforest.R", "psvm.R", "segment.R", "tf-idf.R", "explain.R", "permutation_varimp.R", "extendedisolationforest.R",
+        #             "upliftrandomforest.R", "infogram.R", "isotonicregression.R", "admissibleml.R", "decisiontree.R", "adaboost.R", "hglm.R)
 
+        # src_path <- paste(h2oRDir,"h2o-package","R",sep=.Platform$file.sep)
+        # invisible(lapply(to_src,function(x){source(paste(src_path, x, sep = .Platform$file.sep))}))
+        devtools::load_all(paste(h2oRDir,"h2o-package",sep=.Platform$file.sep), export_all=FALSE)
+        
+        additional_imports <- c(
+            ".h2o.__remoteSend", ".as.survival.coxph.model", ".as.survival.coxph.summary",
+            ".getExpanded", ".str.list", "is.H2OFrame", ".get.session.property", ".set.session.property",
+            ".h2o.maximizing_metrics", ".h2o.doSafeGET", ".parse.h2oconfig", ".h2o.check_java_version",
+            "cut.H2OFrame", "as.data.frame.H2OFrame", ".h2o.perfect_auc", ".newExpr", ".h2o.doSafeREST",
+            ".h2o.fromJSON", ".shorten_model_ids", ".calculate_pareto_front", ".h2o.__IMPORT",
+            # telemetry internals exercised by runit_telemetry.R (session-start events only)
+            ".h2o.send_init_telemetry", ".h2o.send_cluster_connect_telemetry",
+            ".h2o.telemetry.envelope", ".h2o.telemetry.runtime_fields",
+            ".h2o.telemetry.attributes_with_distribution", ".h2o.telemetry.disabled",
+            ".h2o.telemetry.load_persisted_pref", ".h2o.telemetry.maybe_print_notice",
+            ".h2o.telemetry.notice_text",
+            "bucketize_cluster_nodes", "bucketize_cluster_memory_gb"
+         )
+         
+        for (fn in additional_imports)
+            assign(fn, do.call(`:::`, list(quote(h2o), fn)), envir = .GlobalEnv)
+         
         # source h2o-r/tests/runitUtils
         to_src <- c("utilsR.R", "pcaR.R", "deeplearningR.R", "glmR.R", "glrmR.R",
                     "gbmR.R", "kmeansR.R", "naivebayesR.R", "gridR.R", "shared_javapredict.R")
@@ -208,7 +227,7 @@ function() {
         masterSeedFile <- paste(getwd(), "/master_seed", sep = "")
         if (file.exists(masterSeedFile)) seed <- read.table(masterSeedFile)[[1]]
         setupSeed(seed)
-        h2o.logIt("[SEED] :", SEED)
+        cat("[SEED] :", SEED, "\n")
         
         if (!is.na(USERNAME)) {
             Log.info(paste0("Authenticating with http-basic, username: ", USERNAME, "."))

@@ -4,7 +4,7 @@ import hex.genmodel.CategoricalEncoding;
 import hex.genmodel.MojoModel;
 import hex.genmodel.algos.drf.DrfMojoModel;
 import hex.genmodel.algos.gbm.GbmMojoModel;
-import hex.genmodel.attributes.VariableImportances;
+import hex.genmodel.algos.isotonic.IsotonicCalibrator;
 import hex.genmodel.utils.ByteBufferWrapper;
 import hex.genmodel.utils.GenmodelBitSet;
 import water.logging.Logger;
@@ -19,7 +19,7 @@ import java.util.Map;
  * Common ancestor for {@link DrfMojoModel} and {@link GbmMojoModel}.
  * See also: `hex.tree.SharedTreeModel` and `hex.tree.TreeVisitor` classes.
  */
-public abstract class SharedTreeMojoModel extends MojoModel implements TreeBackedMojoModel, PlattScalingMojoHelper.MojoModelWithCalibration {
+public abstract class SharedTreeMojoModel extends MojoModel implements TreeBackedMojoModel, CalibrationMojoHelper.MojoModelWithCalibration {
     
     private static final int NsdNaVsRest = NaSplitDir.NAvsREST.value();
     private static final int NsdNaLeft = NaSplitDir.NALeft.value();
@@ -59,7 +59,12 @@ public abstract class SharedTreeMojoModel extends MojoModel implements TreeBacke
      * GLM's beta used for calibrating output probabilities using Platt Scaling.
      */
     protected double[] _calib_glm_beta;
-    
+
+    /**
+     * For calibrating using Isotonic Regression
+     */
+    protected IsotonicCalibrator _isotonic_calibrator;
+
     protected String _genmodel_encoding;
     
     protected String[] _orig_names;
@@ -809,7 +814,7 @@ public abstract class SharedTreeMojoModel extends MojoModel implements TreeBacke
         logger.error("\nTree inconsistency found:");
         if (node.depth == 1 && !weight_ok) { 
             logger.error("Note: this is a known issue for DRF and Isolation Forest models, " +
-                  "please refer to https://0xdata.atlassian.net/browse/PUBDEV-6140");
+                  "please refer to https://github.com/h2oai/h2o-3/issues/12971");
         }
         logger.error(node.getPrintString("parent"));
         logger.error(node.leftChild.getPrintString("left child"));
@@ -825,6 +830,10 @@ public abstract class SharedTreeMojoModel extends MojoModel implements TreeBacke
 
     protected SharedTreeMojoModel(String[] columns, String[][] domains, String responseColumn) {
         super(columns, domains, responseColumn);
+    }
+
+    protected SharedTreeMojoModel(String[] columns, String[][] domains, String responseColumn, String treatmentColumn) {
+        super(columns, domains, responseColumn, treatmentColumn);
     }
 
     /**
@@ -1107,12 +1116,17 @@ public abstract class SharedTreeMojoModel extends MojoModel implements TreeBacke
 
     @Override
     public boolean calibrateClassProbabilities(double[] preds) { 
-      return PlattScalingMojoHelper.calibrateClassProbabilities(this, preds);
+      return CalibrationMojoHelper.calibrateClassProbabilities(this, preds);
     }
 
     @Override
     public double[] getCalibGlmBeta() {
         return _calib_glm_beta;
+    }
+
+    @Override
+    public IsotonicCalibrator getIsotonicCalibrator() {
+        return _isotonic_calibrator;
     }
 
     @Override

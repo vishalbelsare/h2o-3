@@ -13,6 +13,7 @@ import water.parser.ZipUtil;
 import water.util.Log;
 
 import java.io.IOException;
+import java.net.URI;
 import java.util.*;
 
 /**
@@ -31,11 +32,14 @@ public class Generic extends ModelBuilder<GenericModel, GenericModelParameters, 
         allowedAlgos.add("glm");
         allowedAlgos.add("xgboost");
         allowedAlgos.add("isolationforest");
+        allowedAlgos.add("extendedisolationforest");
         allowedAlgos.add("drf");
         allowedAlgos.add("deeplearning");
         allowedAlgos.add("stackedensemble");
         allowedAlgos.add("coxph");
         allowedAlgos.add("rulefit");
+        allowedAlgos.add("gam");
+        allowedAlgos.add("upliftdrf");
         
         ALLOWED_MOJO_ALGOS = Collections.unmodifiableSet(allowedAlgos);
     }
@@ -48,6 +52,15 @@ public class Generic extends ModelBuilder<GenericModel, GenericModelParameters, 
 
     public Generic(boolean startup_once) {
         super(new GenericModelParameters(), startup_once);
+    }
+
+    @Override
+    public void init(boolean expensive) {
+        super.init(expensive);
+        if (_parms._path != null && _parms._model_key != null) {
+            error("_path", 
+                    "Path cannot be set for MOJO that is supposed to be loaded from distributed memory (key=" + _parms._model_key + ").");
+        }
     }
 
     @Override
@@ -94,8 +107,13 @@ public class Generic extends ModelBuilder<GenericModel, GenericModelParameters, 
                 if (ZipUtil.isCompressed(modelBytes)) {
                     genericModel = importMojo(modelBytes, dataKey);
                 } else {
-                    warn("_path", "Trying to import a POJO model - this is currently an experimental feature.");
-                    genericModel = importPojo(modelBytes, dataKey);
+                    if (H2O.getSysBoolProperty("pojo.import.enabled", false)) {
+                        warn("_path", "Trying to import a POJO model - this is currently an experimental feature.");
+                        genericModel = importPojo(modelBytes, dataKey, _result.toString());
+                    } else {
+                        throw new SecurityException("POJO import is disabled since it brings a security risk. " +
+                            "To enable the feature, set the java property `sys.ai.h2o.pojo.import.enabled` to true.");
+                    }
                 }
                 genericModel.write_lock(_job);
                 genericModel.unlock(_job);
@@ -120,8 +138,8 @@ public class Generic extends ModelBuilder<GenericModel, GenericModelParameters, 
             return new GenericModel(_result, _parms, genericModelOutput, mojoModel, dataKey);
         }
 
-        private GenericModel importPojo(ByteVec pojoBytes, Key<Frame> pojoKey) throws IOException {
-            GenModel genmodel = PojoLoader.loadPojoFromSourceCode(pojoBytes, pojoKey);
+        private GenericModel importPojo(ByteVec pojoBytes, Key<Frame> pojoKey, String modelId) throws IOException {
+            GenModel genmodel = PojoLoader.loadPojoFromSourceCode(pojoBytes, pojoKey, modelId);
             ModelDescriptor pojoDescriptor = ModelDescriptorBuilder.makeDescriptor(genmodel);
             final GenericModelOutput genericModelOutput = new GenericModelOutput(pojoDescriptor);
             return new GenericModel(_result, _parms, genericModelOutput, genmodel, pojoKey);
@@ -179,6 +197,10 @@ public class Generic extends ModelBuilder<GenericModel, GenericModelParameters, 
         p._path = location;
         p._disable_algo_check = disableAlgoCheck;
         return new Generic(p).trainModel().get();
+    }
+
+    public static GenericModel importMojoModel(URI location) {
+        return importMojoModel(location.toString(), false);
     }
 
 }

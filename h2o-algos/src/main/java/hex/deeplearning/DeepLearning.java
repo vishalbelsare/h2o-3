@@ -15,6 +15,7 @@ import water.fvec.RebalanceDataSet;
 import water.fvec.Vec;
 import water.init.Linpack;
 import water.init.NetworkTest;
+import water.util.ArrayUtils;
 import water.util.Log;
 import water.util.MRUtils;
 import water.util.PrettyPrint;
@@ -70,6 +71,20 @@ public class DeepLearning extends ModelBuilder<DeepLearningModel,DeepLearningMod
     super.init(expensive);
     _parms.validate(this, expensive);
     _orig_projection_array = LinearAlgebraUtils.toEigenProjectionArray(_origTrain, _train, expensive);
+    DistributionFamily[] allowed_distributions = new DistributionFamily[] {
+            DistributionFamily.AUTO,
+            DistributionFamily.bernoulli,
+            DistributionFamily.multinomial,
+            DistributionFamily.gaussian,
+            DistributionFamily.poisson,
+            DistributionFamily.gamma,
+            DistributionFamily.laplace,
+            DistributionFamily.quantile,
+            DistributionFamily.huber,
+            DistributionFamily.tweedie,
+    };
+    if (!(ArrayUtils.contains(allowed_distributions, _parms._distribution)))
+      error("_distribution", _parms._distribution.name() + " is not supported for DeepLearning in current H2O.");
     if (expensive && error_count() == 0) checkMemoryFootPrint();
   }
 
@@ -156,7 +171,7 @@ public class DeepLearning extends ModelBuilder<DeepLearningModel,DeepLearningMod
     if( _parms._stopping_rounds == 0 && _parms._max_runtime_secs == 0) return; // No exciting changes to stopping conditions
     // Extract stopping conditions from each CV model, and compute the best stopping answer
     _parms._stopping_rounds = 0;
-    _parms._max_runtime_secs = 0;
+    setMaxRuntimeSecsForMainModel();
     double sum = 0;
     for( ModelBuilder cvmb : cvModelBuilders )
       sum += ((DeepLearningModel)DKV.getGet(cvmb.dest())).last_scored().epoch_counter;
@@ -164,7 +179,8 @@ public class DeepLearning extends ModelBuilder<DeepLearningModel,DeepLearningMod
     if( !_parms._quiet_mode ) {
       warn("_epochs", "Setting optimal _epochs to " + _parms._epochs + " for cross-validation main model based on early stopping of cross-validation models.");
       warn("_stopping_rounds", "Disabling convergence-based early stopping for cross-validation main model.");
-      warn("_max_runtime_secs", "Disabling maximum allowed runtime for cross-validation main model.");
+      if (_parms._main_model_time_budget_factor == 0)
+        warn("_max_runtime_secs", "Disabling maximum allowed runtime for cross-validation main model.");
     }
   }
   
@@ -350,7 +366,7 @@ public class DeepLearning extends ModelBuilder<DeepLearningModel,DeepLearningMod
           }
         }
       } finally {
-        Scope.exit(keep.toArray(new Key[keep.size()]));
+        Scope.untrack(keep);
       }
     }
 
@@ -454,11 +470,12 @@ public class DeepLearning extends ModelBuilder<DeepLearningModel,DeepLearningMod
         //main loop
         for(;;) {
           model.iterations++;
-          model.set_model_info(mp._epochs == 0 ? model.model_info() : H2O.CLOUD.size() > 1 && mp._replicate_training_data ? (mp._single_node_mode ?
-                  new DeepLearningTask2(_job._key, train, model.model_info(), rowFraction(train, mp, model), model.iterations).doAll(Key.make(H2O.SELF)).model_info() : //replicated data + single node mode
-                  new DeepLearningTask2(_job._key, train, model.model_info(), rowFraction(train, mp, model), model.iterations).doAllNodes(             ).model_info()): //replicated data + multi-node mode
-                  new DeepLearningTask (_job._key,        model.model_info(), rowFraction(train, mp, model), model.iterations).doAll     (    train    ).model_info()); //distributed data (always in multi-node mode)
-          if (stop_requested() && !timeout()) throw new Job.JobCancelledException();
+          model.set_model_info(mp._epochs == 0 ? model.model_info() 
+                  : H2O.CLOUD.size() > 1 && mp._replicate_training_data ? (mp._single_node_mode 
+                          ? new DeepLearningTask2(_job._key, train, model.model_info(), rowFraction(train, mp, model), model.iterations).doAll(Key.make(H2O.SELF)).model_info()  //replicated data + single node mode
+                          : new DeepLearningTask2(_job._key, train, model.model_info(), rowFraction(train, mp, model), model.iterations).doAllNodes().model_info()) //replicated data + multi-node mode
+                  : new DeepLearningTask(_job._key, model.model_info(), rowFraction(train, mp, model), model.iterations).doAll(train).model_info()); //distributed data (always in multi-node mode)
+          if (stop_requested() && !timeout()) throw new Job.JobCancelledException(_job);
           if (!model.doScoring(trainScoreFrame, validScoreFrame, _job._key, model.iterations, false)) break; //finished training (or early stopping or convergence)
           if (timeout()) { //stop after scoring
             _job.update((long) (mp._epochs * train.numRows())); // mark progress as completed
@@ -523,7 +540,13 @@ public class DeepLearning extends ModelBuilder<DeepLearningModel,DeepLearningMod
     }
 
     public void initActualParamValues() {
-      EffectiveParametersUtils.initStoppingMetric(_parms, isClassifier());
+      if (_parms._autoencoder) {
+        if (_parms._stopping_metric == ScoreKeeper.StoppingMetric.AUTO) {
+          _parms._stopping_metric = ScoreKeeper.StoppingMetric.MSE;
+        }
+      } else { 
+        EffectiveParametersUtils.initStoppingMetric(_parms, isClassifier());
+      }
       EffectiveParametersUtils.initCategoricalEncoding(_parms, Model.Parameters.CategoricalEncodingScheme.OneHotInternal);
     }
 

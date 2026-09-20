@@ -7,7 +7,7 @@ description = "H2O R Package"
 //apply plugin: 'water.gradle.plugins.manageLocalClouds'
 
 dependencies {
-    api project(path: ":h2o-assemblies:main", configuration: 'shadow')
+    api project(path: ":h2o-assemblies:${mainAssemblyName}", configuration: 'shadow')
 }
 
 def getOS() {
@@ -80,18 +80,6 @@ task setProperties {
     }
 }
 
-task setDevPackageFiles {
-    doLast {
-        File DEV_DESC_TEMP = new File([T, "..", "h2o-3-DESCRIPTION.template"].join(File.separator))
-        File DEV_DESCRIPTION = new File([T, "..", "h2o-3-DESCRIPTION"].join(File.separator))
-        def txt = ""
-        def today = new Date()
-        txt = DEV_DESC_TEMP.text
-        txt = txt.replaceAll("SUBST_PROJECT_VERSION", PROJECT_VERSION).replaceAll("SUBST_PROJECT_BRANCH", BUILD_BRANCH).replaceAll("SUBST_PROJECT_DATE", today.format("YYYY-MM-dd"))
-        DEV_DESCRIPTION.write(txt)
-    }
-}
-
 task setPackageFiles {
     doLast {
         File h2oRd = new File([T, "h2o-package", "man", "h2o-package.Rd"].join(File.separator))
@@ -132,7 +120,7 @@ task genPDF(type: Exec) {
     }
     ignoreExitValue=true
     if (SYS_OS == "windows") commandLine 'cmd', '/c', 'R', 'CMD', "Rd2pdf", "--force", "--output=h2o_package.pdf", "--title=\"h2o\"", "--no-preview", "h2o-package\\man"
-    else commandLine 'R', "CMD", "Rd2pdf", "--force", "--output=h2o_package.pdf", "--title=\"h2o\"", "--no-preview", "h2o-package/man"
+    else commandLine getOsSpecificCommandLine(['R', "CMD", "Rd2pdf", "--force", "--output=h2o_package.pdf", "--title=\"h2o\"", "--no-preview", "h2o-package/man"])
 }
 
 genPDF.onlyIf { PDF_LATEX != "" && SYS_OS != "windows" }
@@ -159,6 +147,10 @@ task cpMainPKG {
             from "h2o-package"
             into "${buildDir}/h2o-package-main"
         }
+        // Telemetry distribution marker for the full package ("h2o"); read at
+        // runtime so the client reports attributes.distribution unambiguously.
+        file("${buildDir}/h2o-package-main/inst").mkdirs()
+        new File("${buildDir}/h2o-package-main/inst", "telemetry_distribution.txt").write("h2o\n")
     }
 }
 
@@ -191,6 +183,8 @@ task cpClientPKG {
             }
             into "${buildDir}/h2o-package-client/inst/"
         }
+        // Telemetry distribution marker for the client-only package.
+        new File("${buildDir}/h2o-package-client/inst", "telemetry_distribution.txt").write("h2o_client\n")
     }
 }
 
@@ -246,7 +240,7 @@ def testsPath = new File("./tests")
 
 task smokeTest(type: Exec) {
     workingDir testsPath
-	def args = ['python', 'run.py', '--wipeall', '--testsize', 's']
+	def args = ['python', '../../scripts/run.py', '--wipeall', '--testsize', 's']
     if (project.hasProperty("jacocoCoverage")) {
         args << '--jacoco'
     }
@@ -262,10 +256,8 @@ task cleanUpSmokeTest {
 clean.dependsOn cleanUp, cleanUpSmokeTest
 setProperties.dependsOn gitbranch, getRVersion, pdflatex
 cpH2OAppJar.dependsOn setProperties
-setDevPackageFiles.dependsOn cpH2OAppJar
 setPackageFiles.dependsOn cpH2OAppJar
-buildPackageDocumentation.dependsOn setDevPackageFiles, setPackageFiles
-genPDF.dependsOn setPackageFiles
+buildPackageDocumentation.dependsOn setPackageFiles
 genPDF.dependsOn buildPackageDocumentation
 cpPDF.dependsOn genPDF
 cpMainPKG.dependsOn cpPDF

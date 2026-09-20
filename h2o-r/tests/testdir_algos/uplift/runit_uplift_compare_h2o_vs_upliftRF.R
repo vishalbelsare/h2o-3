@@ -3,7 +3,7 @@ source("../../../scripts/h2o-r-test-setup.R")
 library(uplift)
 
 
-test.uplift.vs.h2oUplit <- function() {
+test.uplift.vs.h2oUplift <- function() {
   ntrees <- 10
   mtries <- 6
   seed <- 42
@@ -74,14 +74,14 @@ test.uplift.vs.h2oUplit <- function() {
     predh2o <- predict(modelh2o, testh2o)
 
     res <- as.data.frame(predh2o)
-    h2oPerf <- performance(res$p_y1_ct1, res$p_y1_ct0, test$y, test$treat, direction = 1)
+    h2oPerf <- performance(res$p_y1_with_treatment, res$p_y1_without_treatment, test$y, test$treat, direction = 1)
     h2oQini <- qini(h2oPerf)
 
     print(paste("H2O:", h2oQini, "upliftRF:", upliftQini$Qini)) 
-    diff = abs(h2oQini$Qini - upliftQini$Qini)
+    diff <- abs(h2oQini$Qini - upliftQini$Qini)
     print(paste("Diff:", diff))
     expect_true(diff < 10e-1)
   }
 }
 
-doTest("Uplift Random Forest Test: Test H2O RF uplift against uplift.upliftRF", test.uplift.vs.h2oUplit)
+doTest("Uplift Random Forest Test: Test H2O RF uplift against uplift.upliftRF", test.uplift.vs.h2oUplift)

@@ -5,7 +5,9 @@ import org.joda.time.format.DateTimeFormatter;
 import water.*;
 import water.api.FramesHandler;
 import water.api.schemas3.KeyV3;
+import water.exceptions.H2OFileAccessDeniedException;
 import water.exceptions.H2OIllegalArgumentException;
+import water.parser.BinaryFormatExporter;
 import water.parser.BufferedString;
 import water.rapids.Merge;
 import water.util.*;
@@ -13,7 +15,6 @@ import water.util.*;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.*;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /** A collection of named {@link Vec}s, essentially an R-like Distributed Data Frame.
@@ -73,7 +74,7 @@ public class Frame extends Lockable<Frame> {
    * Given a temp Frame and a base Frame from which it was created, delete the
    * Vecs that aren't found in the base Frame and then delete the temp Frame.
    *
-   * TODO: Really should use Scope but Scope does not.
+   * For most use cases with short-lived temp frames, use {@link Scope#protect(Frame...)} or a {@link Scope#safe(Frame...)} instead.
    */
   public static void deleteTempFrameAndItsNonSharedVecs(Frame tempFrame, Frame baseFrame) {
     Key[] keys = tempFrame.keys();
@@ -798,7 +799,7 @@ public class Frame extends Lockable<Frame> {
   /** Actually remove/delete all Vecs from memory, not just from the Frame.
    *  @return the original Futures, for flow-coding */
   @Override protected Futures remove_impl(Futures fs, boolean cascade) {
-    final Key[] keys = _keys;
+    final Key<Vec>[] keys = _keys;
     if( keys.length==0 ) return fs;
 
     // Get the nChunks without calling anyVec - which loads all Vecs eagerly,
@@ -823,10 +824,16 @@ public class Frame extends Lockable<Frame> {
     setNames(new String[0]);
     _keys = makeVecKeys(0);
 
-    // Bulk dumb local remove - no JMM, no ordering, no safety.
-    Vec.bulk_remove(keys, v.nChunks());
-
+    if (cascade) { // removing the vecs from mem only if cascading (default behaviour)
+      // Bulk dumb local remove - no JMM, no ordering, no safety.
+      Vec.bulk_remove(keys, v.nChunks());
+    }
     return fs;
+  }
+
+  @Override
+  public Frame delete_and_lock(Key<Job> job_key) {
+    return super.delete_and_lock(job_key, true); // for Frames, remove dependencies (Vecs) by default when forcing internal delete
   }
 
   /**
@@ -1509,8 +1516,8 @@ public class Frame extends Lockable<Frame> {
    *  @return This Frame's data in an array of Vectors that is compatible with {@code f}. */
   public Vec[] makeCompatible( Frame f, boolean force) {
     // Small data frames are always "compatible"
-    if (anyVec() == null)      // Or it is small
-      return f.vecs();                 // Then must be compatible
+    if (anyVec() == null)      // Or it is empty (no columns)
+      return f.vecs();         // Then must be compatible
     Vec v1 = anyVec();
     Vec v2 = f.anyVec();
     if (v1 != null && v2 != null && v1.length() != v2.length())
@@ -1518,12 +1525,57 @@ public class Frame extends Lockable<Frame> {
     if (v1 == null || v2 == null || (!force && v1.isCompatibleWith(v2)))
       return f.vecs();
     // Ok, here make some new Vecs with compatible layout
-    Key k = Key.make();
+    Key<?> k = Key.make();
     H2O.submitTask(new RebalanceDataSet(this, f, k)).join();
     Frame f2 = (Frame)k.get();
     DKV.remove(k);
     for (Vec v : f2.vecs()) Scope.track(v);
     return f2.vecs();
+  }
+
+  /**
+   * Make rows of a given frame distributed similarly to this frame.
+   * This method is useful e.g. when we have a training frame, and we
+   * want to adapt the testing frame so that there is proportionally
+   * similar amount of testing data in each chunk to the amount of
+   * training data.
+   * The resulting frame will have the same number of chunks as this
+   * frame.
+   * 
+   * @param f frame that we want to re-distributed
+   * @param newKey key for a newly created frame
+   * @return new frame or the given frame if nothing needs to be done
+   */
+  public Frame makeSimilarlyDistributed(Frame f, Key<Frame> newKey) {
+    final Vec model = anyVec();
+    final Vec source = f.anyVec();
+    if (model == null || source == null) { // model/source frame has no columns
+      return f;
+    }
+    if (model.length() == 0) {
+      throw new IllegalStateException("Cannot make frame similarly distributed to a model frame that has no rows.");
+    }
+    final long[] newESPC = new long[model.espc().length];
+    final double ratio = (double) source.length() / model.length();
+    int firstNonEmpty = -1;
+    long totalAllocated = 0;
+    for (int i = 0; i < newESPC.length - 1; i++) {
+      int newLen = (int) (ratio * model.chunkLen(i));
+      totalAllocated += newLen;
+      newESPC[i + 1] = newLen + newESPC[i];
+      if (firstNonEmpty == -1 && newLen > 0) {
+        firstNonEmpty = i;
+      }
+    }
+    assert firstNonEmpty >= 0;
+    // put rows that we didn't allocate due to rounding errors into a first non-empty chunk
+    final int diff = (int) (source.length() - totalAllocated);
+    assert diff >= 0;
+    for (int i = firstNonEmpty; i < newESPC.length - 1; i++) {
+      newESPC[i + 1] += diff;
+    }
+    H2O.submitTask(new RebalanceDataSet(newESPC, new Vec.VectorGroup(), f, newKey)).join();
+    return newKey.get();
   }
 
   public static Job export(Frame fr, String path, String frameName, boolean overwrite, int nParts) {
@@ -1534,11 +1586,13 @@ public class Frame extends Lockable<Frame> {
                            String compression, CSVStreamParams csvParms) {
     return export(fr, path, frameName, overwrite, nParts, false, compression, csvParms);
   }
-
   public static Job export(Frame fr, String path, String frameName, boolean overwrite, int nParts, boolean parallel,
                            String compression, CSVStreamParams csvParms) {
     boolean forceSingle = nParts == 1;
     // Validate input
+    if (H2O.getPM().isFileAccessDenied(path)) {
+      throw new H2OFileAccessDeniedException("File " + path + " access denied");
+    }
     if (forceSingle) {
       boolean fileExists = H2O.getPM().exists(path);
       if (overwrite && fileExists) {
@@ -1554,8 +1608,37 @@ public class Frame extends Lockable<Frame> {
     }
     CompressionFactory compressionFactory = compression != null ? CompressionFactory.make(compression) : null;
     Job job =  new Job<>(fr._key, "water.fvec.Frame", "Export dataset");
+
     FrameUtils.ExportTaskDriver t = new FrameUtils.ExportTaskDriver(
             fr, path, frameName, overwrite, job, nParts, parallel, compressionFactory, csvParms);
+    return job.start(t, fr.anyVec().nChunks());
+  }
+
+  public static Job exportParquet(Frame fr, String path, boolean overwrite, String compression, boolean writeChecksum, boolean tzAdjustFromLocal) {
+    // Validate input
+    if (H2O.getPM().isFileAccessDenied(path)) {
+      throw new H2OFileAccessDeniedException("File " + path + " access denied");
+    }
+    if (! H2O.getPM().isEmptyDirectoryAllNodes(path)) {
+      throw new H2OIllegalArgumentException(path, "exportFrame", "Cannot use path " + path +
+              " to store part files! The target needs to be either an existing empty directory or not exist yet.");
+    }
+
+    BinaryFormatExporter parquetExporter = null;
+    ServiceLoader<BinaryFormatExporter> parquetExporters = ServiceLoader.load(BinaryFormatExporter.class);
+    for (BinaryFormatExporter exporter : parquetExporters) {
+      if (exporter.supports(ExportFileFormat.parquet)) {
+        parquetExporter = exporter;
+        break;
+      }
+    }
+    if (parquetExporter == null) {
+      Log.warn("No parquet exporter on the classpath!");
+      throw new RuntimeException("No parquet exporter on the classpath!");
+    }
+    Job job =  new Job<>(fr._key, "water.fvec.Frame", "Export dataset");
+
+    H2O.H2OCountedCompleter t = parquetExporter.export(fr, path, overwrite, compression, writeChecksum, tzAdjustFromLocal);
     return job.start(t, fr.anyVec().nChunks());
   }
 

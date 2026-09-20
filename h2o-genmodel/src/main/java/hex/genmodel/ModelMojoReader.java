@@ -1,6 +1,7 @@
 package hex.genmodel;
 
 import com.google.gson.JsonObject;
+import hex.genmodel.algos.isotonic.IsotonicCalibrator;
 import hex.genmodel.attributes.ModelAttributes;
 import hex.genmodel.attributes.ModelJsonReader;
 import hex.genmodel.attributes.Table;
@@ -79,6 +80,10 @@ public abstract class ModelMojoReader<M extends MojoModel> {
   protected abstract void readModelData() throws IOException;
 
   protected abstract M makeModel(String[] columns, String[][] domains, String responseColumn);
+
+  protected M makeModel(String[] columns, String[][] domains, String responseColumn, String treatmentColumn){
+    return makeModel(columns, domains, responseColumn);
+  }
 
   /**
    * Maximal version of the mojo file current model reader supports. Follows the <code>major.minor</code>
@@ -173,6 +178,26 @@ public abstract class ModelMojoReader<M extends MojoModel> {
     return array;
   }
 
+  protected IsotonicCalibrator readIsotonicCalibrator() throws IOException {
+    return new IsotonicCalibrator(
+      readkv("calib_min_x", Double.NaN),
+      readkv("calib_max_x", Double.NaN),
+      readblobDoubles("calib/thresholds_x"),
+      readblobDoubles("calib/thresholds_y")
+    );
+  }
+
+  private double[] readblobDoubles(String filename) throws IOException {
+    byte[] bytes = readblob(filename);
+    final ByteBuffer bb = ByteBuffer.wrap(bytes);
+    int size = bb.getInt();
+    double[] doubles = new double[size];
+    for (int i = 0; i < doubles.length; i++) {
+      doubles[i] = bb.getDouble();
+    }
+    return doubles;
+  }
+
   /**
    * Reads an two dimensional array written by {@link hex.ModelMojoWriter#writeRectangularDoubleArray} method.
    * 
@@ -221,7 +246,7 @@ public abstract class ModelMojoReader<M extends MojoModel> {
     String[] columns = (String[]) _lkv.get("[columns]");
     String[][] domains = parseModelDomains(columns.length);
     boolean isSupervised = readkv("supervised");
-    _model = makeModel(columns, domains, isSupervised ? columns[columns.length - 1] : null);
+    _model = makeModel(columns, domains, isSupervised ? columns[columns.length - 1] : null, (String) readkv("treatment_column"));
     _model._uuid = readkv("uuid");
     _model._algoName = readkv("algo");
     _model._h2oVersion = readkv("h2o_version", "unknown");
@@ -234,13 +259,14 @@ public abstract class ModelMojoReader<M extends MojoModel> {
     _model._priorClassDistrib = readkv("prior_class_distrib");
     _model._modelClassDistrib = readkv("model_class_distrib");
     _model._offsetColumn = readkv("offset_column");
+    _model._foldColumn = readkv("fold_column");
     _model._mojo_version = ((Number) readkv("mojo_version")).doubleValue();
     checkMaxSupportedMojoVersion();
     readModelData();
     if (readModelMetadata) {
       final String algoFullName = readkv("algorithm"); // The key'algo' contains the shortcut, 'algorithm' is the long version
-      _model._modelDescriptor = ModelDescriptorBuilder.makeDescriptor(_model, algoFullName);
       _model._modelAttributes = readModelSpecificAttributes();
+      _model._modelDescriptor = ModelDescriptorBuilder.makeDescriptor(_model, algoFullName, _model._modelAttributes);
     }
     _model._reproducibilityInformation = readReproducibilityInformation() ;
   }
@@ -383,5 +409,14 @@ public abstract class ModelMojoReader<M extends MojoModel> {
 
   protected MojoReaderBackend getMojoReaderBackend() {
     return _reader;
+  }
+
+  public String[] readStringArrays(int aSize, String title) throws IOException {
+    String[] stringArrays = new String[aSize];
+    int counter = 0;
+    for (String line : readtext(title)) {
+      stringArrays[counter++] = line;
+    }
+    return stringArrays;
   }
 }

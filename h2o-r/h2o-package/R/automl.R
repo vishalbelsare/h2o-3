@@ -28,9 +28,14 @@
 #'        be automatically computed to obtain class balance during training. Requires `balance_classes`.
 #' @param max_after_balance_size Maximum relative size of the training data after balancing class counts (can be less than 1.0). Requires
 #'        `balance_classes`. Defaults to 5.0.
-#' @param max_runtime_secs This argument specifies the maximum time that the AutoML process will run for. If neither `max_runtime_secs` nor `max_models` are specified by the user, then `max_runtime_secs` defaults to 3600 seconds (1 hour).
+#' @param max_runtime_secs This argument specifies the maximum time that the AutoML process will run for.
+#'        If both `max_runtime_secs` and `max_models` are specified, then the AutoML run will stop as soon as it hits either of these limits.
+#'        If neither `max_runtime_secs` nor `max_models` are specified by the user, then `max_runtime_secs` defaults to 3600 seconds (1 hour).
 #' @param max_runtime_secs_per_model Maximum runtime in seconds dedicated to each individual model training process. Use 0 to disable. Defaults to 0.
+#'        Note that models constrained by a time budget are not guaranteed reproducible.
 #' @param max_models Maximum number of models to build in the AutoML process (does not include Stacked Ensembles). Defaults to NULL (no strict limit).
+#'        Always set this parameter to ensure AutoML reproducibility: all models are then trained until convergence and none is constrained by a time budget.
+#' @param distribution Distribution function used by algorithms that support it; other algorithms use their defaults. Possible values: "AUTO", "bernoulli", "multinomial", "gaussian", "poisson", "gamma", "tweedie", "laplace", "quantile", "huber", "custom", and for parameterized distributions list form is used to specify the parameter, e.g., `list(type = "tweedie", tweedie_power = 1.5)`. Defaults to "AUTO".
 #' @param stopping_metric Metric to use for early stopping ("AUTO" is logloss for classification, deviance for regression).
 #'        Must be one of "AUTO", "deviance", "logloss", "MSE", "RMSE", "MAE", "RMSLE", "AUC", "AUCPR", "lift_top_group", "misclassification", "mean_per_class_error". Defaults to "AUTO".
 #' @param stopping_tolerance Relative tolerance for metric-based stopping criterion (stop if relative improvement is not at least this much). This value defaults to 0.001 if the
@@ -106,7 +111,7 @@ h2o.automl <- function(x, y, training_frame,
                        validation_frame = NULL,
                        leaderboard_frame = NULL,
                        blending_frame = NULL,
-                       nfolds = 5,
+                       nfolds = -1,
                        fold_column = NULL,
                        weights_column = NULL,
                        balance_classes = FALSE,
@@ -115,6 +120,7 @@ h2o.automl <- function(x, y, training_frame,
                        max_runtime_secs = NULL,
                        max_runtime_secs_per_model = NULL,
                        max_models = NULL,
+                       distribution = c("AUTO", "bernoulli", "ordinal", "multinomial", "gaussian", "poisson", "gamma", "tweedie", "laplace", "quantile", "huber", "custom"),
                        stopping_metric = c("AUTO", "deviance", "logloss", "MSE", "RMSE", "MAE", "RMSLE", "AUC", "AUCPR", "lift_top_group", "misclassification", "mean_per_class_error"),
                        stopping_tolerance = NULL,
                        stopping_rounds = 3,
@@ -222,6 +228,38 @@ h2o.automl <- function(x, y, training_frame,
   build_control$stopping_criteria$stopping_metric <- ifelse(length(stopping_metric) == 1,
                                                             match.arg(tolower(stopping_metric), tolower(formals()$stopping_metric)),
                                                             match.arg(stopping_metric))
+  if (!is.null(distribution) && !missing(distribution)) {
+    if (is.list(distribution)) {
+      build_control$distribution <- distribution$type
+      ALLOWED_DISTRIBUTION_PARAMETERS <- list(
+        custom = 'custom_distribution_func',
+        huber = 'huber_alpha',
+        quantile = 'quantile_alpha',
+        tweedie = 'tweedie_power'
+      )
+      param <- ALLOWED_DISTRIBUTION_PARAMETERS[[distribution$type]]
+      if (!any(param == ALLOWED_DISTRIBUTION_PARAMETERS[[distribution$type]]) && length(distribution) != 1)
+        stop(sprintf("Distribution \"%s\" requires \"%s\" parameter, e.g., `list(type = \"%s\", %s = ...)`.",
+                     distribution$type, ALLOWED_DISTRIBUTION_PARAMETERS[[distribution$type]],
+                     distribution$type, ALLOWED_DISTRIBUTION_PARAMETERS[[distribution$type]]
+        ))
+      if (tolower(distribution$type) == "custom") {
+        stop(paste0('Distribution "custom" has to be specified as a ',
+                    'dictionary with their respective parameters, e.g., ',
+                    '`list(type = \"custom\", custom_distribution_func = \"...\"))`.'))
+      }
+      if (param %in% names(distribution))
+        build_control[[param]] <- distribution[[param]]
+    } else {
+      distribution <- match.arg(distribution)
+      if (tolower(distribution) == "custom") {
+        stop(paste0('Distribution "custom" has to be specified as a ',
+                    'dictionary with their respective parameters, e.g., ',
+                    '`list(type = \"custom\", custom_distribution_func = \"...\"))`.'))
+      }
+      build_control$distribution <- distribution
+    }
+  }
   if (!is.null(stopping_tolerance)) {
     build_control$stopping_criteria$stopping_tolerance <- stopping_tolerance
   }
@@ -323,10 +361,9 @@ h2o.automl <- function(x, y, training_frame,
   }
 
   # Update build_control with nfolds
-  if (nfolds < 0) {
-    stop("nfolds cannot be negative. Use nfolds >=2 if you want cross-valiated metrics and Stacked Ensembles or use nfolds = 0 to disable.")
-  }
-  if (nfolds == 1) {
+  if (nfolds < 0 && nfolds != -1) {
+    stop("nfolds cannot be negative with the exception of -1 which means \"AUTO\". Use nfolds >=2 if you want cross-valiated metrics and Stacked Ensembles or use nfolds = 0 to disable.")
+  } else if (nfolds == 1) {
     stop("nfolds = 1 is an invalid value. Use nfolds >=2 if you want cross-valiated metrics and Stacked Ensembles or use nfolds = 0 to disable.")
   }
   build_control$nfolds <- nfolds
@@ -423,11 +460,13 @@ h2o.predict.H2OAutoML <- function(object, newdata, ...) {
   try({
       if (job$progress > ifelse(is.null(state$last_job_progress), 0, state$last_job_progress)) {
         project_name <- job$dest$name
-        events <- .automl.fetch_state(project_name, properties=list())$json$event_log_table
+        events <- .automl.fetch_state(project_name, properties=list(), verbosity=verbosity)$json$event_log_table
         last_nrows <- ifelse(is.null(state$last_events_nrows), 0, state$last_events_nrows)
         if (nrow(events) > last_nrows) {
           for (row in (last_nrows+1):nrow(events)) {
-            cat(paste0("\n", events[row, 'timestamp'], ': ', events[row, 'message']))
+            ts <- events[row, 'timestamp']
+            msg <- events[row, 'message']
+            if (any(nzchar(c(ts, msg)))) cat(paste0("\n", ts, ': ', msg))
           }
           state$last_events_nrows <- nrow(events)
         }
@@ -462,9 +501,11 @@ h2o.predict.H2OAutoML <- function(object, newdata, ...) {
   return(frame)
 }
 
-.automl.fetch_state <- function(run_id, properties=NULL) {
+.automl.fetch_state <- function(run_id, properties=NULL, verbosity=NULL) {
   # GET AutoML job and leaderboard for project
-  state_json <- .h2o.__remoteSend(h2oRestApiVersion = 99, method = "GET", page = paste0("AutoML/", run_id))
+  params <- list()
+  if (!is.null(verbosity)) params$verbosity <- verbosity
+  state_json <- .h2o.__remoteSend(h2oRestApiVersion = 99, method = "GET", page = paste0("AutoML/", run_id), .params=params)
   project_name <- state_json$project_name
   automl_id <- state_json$automl_id$name
   is_leaderboard_empty <- all(dim(state_json$leaderboard_table) == c(1, 1)) && state_json$leaderboard_table[1, 1] == ""

@@ -1,6 +1,5 @@
 # -*- encoding: utf-8 -*-
 """Information about the backend H2O cluster."""
-from __future__ import division, print_function, absolute_import, unicode_literals
 from h2o.utils.compatibility import *  # NOQA
 
 import json
@@ -10,7 +9,7 @@ import time
 
 import h2o
 from h2o.exceptions import H2OConnectionError, H2OServerError
-from h2o.display import H2ODisplay
+from h2o.display import H2OTableDisplay
 from h2o.schemas import H2OSchema
 from h2o.utils.typechecks import assert_is_type
 from h2o.utils.shared_utils import get_human_readable_bytes, get_human_readable_time
@@ -102,7 +101,7 @@ class H2OCluster(H2OSchema):
         if prompt:
             question = "Are you sure you want to shutdown the H2O instance running at %s (Y/N)? " \
                        % h2o.connection().base_url
-            response = input(question)  # works in Py2 & Py3 because redefined in h2o.utils.compatibility module
+            response = input(question)
         else:
             response = "Y"
         if response.lower() in {"y", "yes"}:
@@ -131,13 +130,13 @@ class H2OCluster(H2OSchema):
         keys = _cluster_status_info_keys
         values = self._get_cluster_status_info_values()
         table = [[k+":", values[i]] for i, k in enumerate(keys)]
-        H2ODisplay(table)
+        H2OTableDisplay(table, prefer_pandas=False).show()
 
         if detailed:
             keys = _cluster_status_detailed_info_keys
-            header = ["Nodes info:"] + ["Node %d" % (i + 1) for i in range(len(self.nodes))]
+            columns = ["Nodes info:"] + ["Node %d" % (i + 1) for i in range(len(self.nodes))]
             table = [[k]+[node[k] for node in self.nodes] for k in keys]
-            H2ODisplay(table=table, header=header)
+            H2OTableDisplay(table=table, columns_labels=columns, prefer_pandas=False).show()
 
     def get_status(self):
         """
@@ -219,16 +218,19 @@ class H2OCluster(H2OSchema):
             if build_number_h2o is None or build_number_h2o == "unknown":
                 message = ("Version mismatch. H2O is version {0}, but the h2o-python package is version {1}. "
                            "Upgrade H2O and h2o-Python to latest stable version - "
-                           "http://h2o-release.s3.amazonaws.com/h2o/latest_stable.html"
+                           "http://h2o-release.s3.amazonaws.com/h2o/latest_stable.html.  To avoid this error "
+                           "message (not recommended), you can set strict_version_check=False."
                            ).format(ver_h2o, ver_pkg)
             elif build_number_h2o == "99999":
                 message = ("Version mismatch. H2O is version {0}, but the h2o-python package is version {1}. "
-                           "This is a developer build, please contact your developer."
+                           "This is a developer build, please contact your developer.  To avoid this error "
+                           "message (not recommended), you can set strict_version_check=False."
                            ).format(ver_h2o, ver_pkg)
             else:
                 message = ("Version mismatch. H2O is version {0}, but the h2o-python package is version {1}. "
                            "Install the matching h2o-Python version from - "
-                           "http://h2o-release.s3.amazonaws.com/h2o/{2}/{3}/index.html."
+                           "http://h2o-release.s3.amazonaws.com/h2o/{2}/{3}/index.html.  To avoid this error "
+                           "message (not recommended), you can set strict_version_check=False."
                            ).format(ver_h2o, ver_pkg, branch_name_h2o, build_number_h2o)
             if strict:
                 raise H2OConnectionError(message)
@@ -236,8 +238,8 @@ class H2OCluster(H2OSchema):
                 print("Warning:", message)
         # Check age of the install
         if self.build_too_old:
-            print(("Warning: Your H2O cluster version is too old ({})!"
-                   "Please download and install the latest version from http://h2o.ai/download/"
+            print(("Warning: Your H2O cluster version is ({}) old.  There may be a newer version available.\n"
+                   "Please download and install the latest version from: https://h2o-release.s3.amazonaws.com/h2o/latest_stable.html"
                    ).format(self.build_age))
 
     # ------------------------------------------------------------------------------------------------------------------
@@ -279,12 +281,15 @@ class H2OCluster(H2OSchema):
             status += ", healthy"
         else:
             status += ", %d nodes are not healthy" % unhealthy_nodes
-        api_extensions = self.list_api_extensions()
+        _srv = self._props.get("telemetry_enabled")
+        _server_telemetry = "unknown" if _srv is None else ("enabled" if _srv else "disabled")
+        from h2o import telemetry as _tel
+        _client_telemetry = "disabled" if _tel._telemetry_disabled() else "enabled"
         values = [get_human_readable_time(self.cloud_uptime_millis),
                   self.cloud_internal_timezone,
                   self.datafile_parser_timezone,
                   self.version,
-                  "{} {}".format(self.build_age, ("!!!" if self.build_too_old else "")),
+                  self.build_age,
                   self.cloud_name,
                   self.cloud_size,
                   get_human_readable_bytes(free_mem),
@@ -294,15 +299,17 @@ class H2OCluster(H2OSchema):
                   h2o.connection().base_url,
                   json.dumps(h2o.connection().proxy),
                   self.internal_security_enabled,
-                  ', '.join(api_extensions),
-                  "%d.%d.%d %s" % tuple(sys.version_info[:4])]
+                  "%d.%d.%d %s" % tuple(sys.version_info[:4]),
+                  _server_telemetry,
+                  _client_telemetry]
         return values
 
 
 _cluster_status_info_keys = ["H2O_cluster_uptime", "H2O_cluster_timezone", "H2O_data_parsing_timezone",
             "H2O_cluster_version", "H2O_cluster_version_age", "H2O_cluster_name", "H2O_cluster_total_nodes",
             "H2O_cluster_free_memory", "H2O_cluster_total_cores", "H2O_cluster_allowed_cores", "H2O_cluster_status",
-            "H2O_connection_url", "H2O_connection_proxy", "H2O_internal_security", "H2O_API_Extensions", "Python_version"]
+            "H2O_connection_url", "H2O_connection_proxy", "H2O_internal_security", "Python_version",
+            "H2O_telemetry_server", "H2O_telemetry_client"]
     
 _cluster_status_detailed_info_keys = ["h2o", "healthy", "last_ping", "num_cpus", "sys_load", "mem_value_size",
                                       "free_mem", "pojo_mem", "swap_mem", "free_disk", "max_disk", "pid", "num_keys",

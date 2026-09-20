@@ -3,6 +3,8 @@ package hex.genmodel.descriptor;
 import hex.ModelCategory;
 import hex.genmodel.GenModel;
 import hex.genmodel.MojoModel;
+import hex.genmodel.attributes.ModelAttributes;
+import hex.genmodel.attributes.parameters.ColumnSpecifier;
 import hex.genmodel.utils.ArrayUtils;
 
 import java.io.Serializable;
@@ -16,10 +18,12 @@ public class ModelDescriptorBuilder {
      *
      * @param mojoModel         A MojoModel to extract the model description from
      * @param fullAlgorithmName A full name of the algorithm
+     * @param modelAttributes   Optional model attributes
      * @return A new instance of {@link ModelDescriptor}
      */
-    public static ModelDescriptor makeDescriptor(final MojoModel mojoModel, final String fullAlgorithmName) {
-        return new MojoModelDescriptor(mojoModel, fullAlgorithmName);
+    public static ModelDescriptor makeDescriptor(final MojoModel mojoModel, final String fullAlgorithmName,
+                                                 final ModelAttributes modelAttributes) {
+        return new MojoModelDescriptor(mojoModel, fullAlgorithmName, modelAttributes);
     }
 
     public static ModelDescriptor makeDescriptor(final GenModel pojoModel) {
@@ -39,6 +43,10 @@ public class ModelDescriptorBuilder {
         private final double[] _priorClassDistrib;
         private final double[] _modelClassDistrib;
         private final String _offsetColumn;
+        private final String _foldColumn;
+        private final String _weightsColumn;
+        private final String _treatmentColumn;
+        private final String _idColumn;
         private final String[][] _domains;
         private final String[][] _origDomains;
         private final String[] _names;
@@ -46,7 +54,8 @@ public class ModelDescriptorBuilder {
         private final String _algoName;
         private final String _fullAlgoName;
 
-        private MojoModelDescriptor(final MojoModel mojoModel, final String fullAlgorithmName) {
+        private MojoModelDescriptor(final MojoModel mojoModel, final String fullAlgorithmName,
+                                    final ModelAttributes modelAttributes) {
             _category = mojoModel._category;
             _uuid = mojoModel._uuid;
             _supervised = mojoModel.isSupervised();
@@ -58,12 +67,25 @@ public class ModelDescriptorBuilder {
             _modelClassDistrib = mojoModel._modelClassDistrib;
             _h2oVersion = mojoModel._h2oVersion;
             _offsetColumn = mojoModel._offsetColumn;
+            _foldColumn = mojoModel._foldColumn;
             _domains = mojoModel._domains;
             _origDomains = mojoModel.getOrigDomainValues();
             _names = mojoModel._names;
             _origNames = mojoModel.getOrigNames();
             _algoName = mojoModel._algoName;
             _fullAlgoName = fullAlgorithmName;
+            if (modelAttributes != null) {
+                ColumnSpecifier weightsColSpec = (ColumnSpecifier) modelAttributes.getParameterValueByName("weights_column");
+                _weightsColumn = weightsColSpec != null ? weightsColSpec.getColumnName() : null;
+                // the treatment column should be ColumnSpecifier not String - this should be fixed in different PR
+                _treatmentColumn = (String) modelAttributes.getParameterValueByName("treatment_column");
+                ColumnSpecifier idColSpec = (ColumnSpecifier) modelAttributes.getParameterValueByName("id_column");
+                _idColumn = idColSpec != null ? idColSpec.getColumnName() : null;
+            } else {
+                _weightsColumn = null;
+                _treatmentColumn = null;
+                _idColumn = null;
+            }
         }
 
         @Override
@@ -93,13 +115,21 @@ public class ModelDescriptorBuilder {
 
         @Override
         public String weightsColumn() {
-            return null;
+            return _weightsColumn;
         }
 
         @Override
         public String foldColumn() {
-            return null;
+            return _foldColumn;
         }
+
+        @Override
+        public String treatmentColumn() {
+            return _treatmentColumn;
+        }
+
+        @Override
+        public String idColumn() { return _idColumn;}
 
         @Override
         public ModelCategory getModelCategory() {
@@ -235,6 +265,12 @@ public class ModelDescriptorBuilder {
         public String foldColumn() {
             return null;
         }
+
+        @Override
+        public String treatmentColumn() { return null; }
+
+        @Override
+        public String idColumn() { return null; }
 
         @Override
         public ModelCategory getModelCategory() {

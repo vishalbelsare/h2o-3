@@ -39,6 +39,12 @@ public class ParseV3 extends RequestSchemaV3<Iced, ParseV3> {
   @API(help="Skipped columns indices", direction=API.Direction.INOUT)
   public int[] skipped_columns;
 
+  @API(help="If true, will force the column types to be either the ones in Parquet schema for Parquet files or the " +
+          "ones specified in column_types.  This parameter is used for numerical columns only.  Other column" +
+          "settings will happen without setting this parameter.  Defaults to false.", 
+          direction=API.Direction.INPUT)
+  public boolean force_col_types;
+
   @API(help="Domains for categorical columns")
   public String[][] domains;
 
@@ -73,4 +79,7 @@ public class ParseV3 extends RequestSchemaV3<Iced, ParseV3> {
 
   @API(help="One ASCII character used to escape other characters.", direction=API.Direction.INOUT)
   public byte escapechar = ParseSetup.DEFAULT_ESCAPE_CHAR;
+
+  @API(help="Adjust the imported time from GMT timezone to cluster timezone.", direction=API.Direction.INPUT)
+  public boolean tz_adjust_to_local;
 }

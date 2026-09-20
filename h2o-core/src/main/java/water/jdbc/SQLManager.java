@@ -4,11 +4,22 @@ import water.*;
 import water.fvec.*;
 import water.parser.ParseDataset;
 import water.util.Log;
+import water.util.StringUtils;
 
+import java.io.UnsupportedEncodingException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.URLDecoder;
 import java.sql.*;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 public class SQLManager {
 
@@ -30,6 +41,18 @@ public class SQLManager {
 
   private static final String TMP_TABLE_ENABLED = H2O.OptArgs.SYSTEM_PROP_PREFIX + "sql.tmp_table.enabled";
 
+  private static final String DISALLOWED_JDBC_PARAMETERS_PARAM = H2O.OptArgs.SYSTEM_PROP_PREFIX + "sql.jdbc.disallowed.parameters";
+
+  private static final Pattern JDBC_PARAMETERS_REGEX_PATTERN = Pattern.compile("(?i)([a-z0-9_]+)\\s*=\\s*");
+
+  private static final List<String> DEFAULT_JDBC_DISALLOWED_PARAMETERS = Stream.of(
+          "autoDeserialize", "queryInterceptors", "allowLoadLocalInfile", "allowMultiQueries", //mysql
+          "allowLoadLocalInfileInPath", "allowUrlInLocalInfile", "allowPublicKeyRetrieval", //mysql
+          "statementInterceptors", //mysql
+          "socketFactory", "socketFactoryArg", "sslfactory", "sslfactoryarg", //postgresql
+          "loggerLevel", "loggerFile", //postgresql -- not dangerous but user should not have a reason to use them
+          "init", "script", "shutdown" //h2
+  ).map(String::toLowerCase).collect(Collectors.toList());
   private static AtomicLong NEXT_TABLE_NUM = new AtomicLong(0);
   
   static Key<Frame> nextTableKey(String prefix, String postfix) {
@@ -58,6 +81,7 @@ public class SQLManager {
       final String username, final String password, final String columns,
       final Boolean useTempTable, final String tempTableName,
       final SqlFetchMode fetchMode, final Integer numChunksHint) {
+    validateJdbcUrl(connection_url);
 
     final Key<Frame> destination_key = nextTableKey(table, "sql_to_hex");
     final Job<Frame> j = new Job<>(destination_key, Frame.class.getName(), "Import SQL Table");
@@ -238,6 +262,7 @@ public class SQLManager {
         }
 
       } catch (SQLException ex) {
+        Log.err(ex);
         throw new RuntimeException("SQLException: " + ex.getMessage() + "\nFailed to connect and read from SQL database with connection_url: " + _connection_url, ex);
       } finally {
         // release resources in a finally{} block in reverse-order of their creation
@@ -468,17 +493,24 @@ public class SQLManager {
     }
 
     private static int getMaxConnectionsTotal() {
-      int maxConnections = MAX_CONNECTIONS;
+      return getMaxConnectionsTotal(MAX_CONNECTIONS);
+    }
+
+    static int getMaxConnectionsTotal(final int allowedMaxConnections) {
+      int maxConnections = allowedMaxConnections;
       final String userDefinedMaxConnections = System.getProperty(MAX_USR_CONNECTIONS_KEY);
-      try {
-        Integer userMaxConnections = Integer.valueOf(userDefinedMaxConnections);
-        if (userMaxConnections > 0 && userMaxConnections < MAX_CONNECTIONS) {
-          maxConnections = userMaxConnections;
+      if (userDefinedMaxConnections != null) {
+        try {
+          final int userMaxConnections = Integer.parseInt(userDefinedMaxConnections);
+          if (userMaxConnections > 0 && userMaxConnections < allowedMaxConnections) {
+            maxConnections = userMaxConnections;
+          }
+        } catch (NumberFormatException e) {
+          Log.warn("Unable to parse maximal number of connections: " + userDefinedMaxConnections
+                  + ". Falling back to default settings (" + allowedMaxConnections + ").", e);
         }
-      } catch (NumberFormatException e) {
-        Log.info("Unable to parse maximal number of connections: " + userDefinedMaxConnections
-                + ". Falling back to default settings (" + MAX_CONNECTIONS + ").", e);
       }
+      Log.info("SQL import will be limited be maximum of " + maxConnections + " connections.");
       return maxConnections;
     }
 
@@ -525,6 +557,7 @@ public class SQLManager {
    * @throws SQLException if a database access error occurs or the url is
    */
   public static Connection getConnectionSafe(String url, String username, String password) throws SQLException {
+    validateJdbcUrl(url);
     initializeDatabaseDriver(getDatabaseType(url));
     try {
       return DriverManager.getConnection(url, username, password);
@@ -577,6 +610,48 @@ public class SQLManager {
         break;
       default:
         //nothing to do
+    }
+  }
+
+  public static void validateJdbcUrl(String jdbcUrl) throws IllegalArgumentException {
+    if (jdbcUrl == null || jdbcUrl.trim().isEmpty()) {
+      throw new IllegalArgumentException("JDBC URL is null or empty");
+    }
+
+    String previous = null;
+    String jdbcUrlDecode = jdbcUrl;
+    try {
+      for (int i = 0; i < 10; i++) {
+        previous = jdbcUrlDecode;
+        jdbcUrlDecode = URLDecoder.decode(jdbcUrlDecode, "UTF-8");
+        if (previous.equals(jdbcUrlDecode)) {
+          break;
+        }
+      }
+    } catch (UnsupportedEncodingException e) {
+      throw new IllegalArgumentException("JDBC URL has wrong encoding");
+    }
+    
+    if (!previous.equals(jdbcUrlDecode)) {
+      throw new IllegalArgumentException("JDBC URL contains invalid characters");
+    }
+
+    if (!jdbcUrlDecode.toLowerCase().startsWith("jdbc:")) {
+      throw new IllegalArgumentException("JDBC URL must start with 'jdbc:'");
+    }
+
+    Matcher matcher = JDBC_PARAMETERS_REGEX_PATTERN.matcher(jdbcUrlDecode);
+    String property = System.getProperty(DISALLOWED_JDBC_PARAMETERS_PARAM);
+    List<String> disallowedParameters = property == null ?
+            DEFAULT_JDBC_DISALLOWED_PARAMETERS :
+            Arrays.stream(property.split(",")).map(String::toLowerCase).collect(Collectors.toList());
+
+    while (matcher.find()) {
+      String key = matcher.group(1);
+      if (disallowedParameters.contains(key.toLowerCase())) {
+        throw new IllegalArgumentException("Potentially dangerous JDBC parameter found: " + key +
+                ". That behavior can be altered by setting " + DISALLOWED_JDBC_PARAMETERS_PARAM + " env variable to another comma separated list.");
+      }
     }
   }
 

@@ -3,8 +3,10 @@
 ``max_runtime_secs``
 -----------------------
 
-- Available in: GBM, DRF, Deep Learning, GLM, PCA, GLRM, Naïve-Bayes, K-Means, AutoML, XGBoost, Word2vec, Isolation Forest, Stacked Ensembles, Uplift DRF
+- Available in: GBM, DRF, Deep Learning, GLM, HGLM, PCA, GLRM, Naïve-Bayes, K-Means, AutoML, XGBoost, Word2vec, Isolation Forest, Stacked Ensembles, Uplift DRF, ANOVAGLM, ModelSelection
 - Hyperparameter: yes
+
+.. note:: This parameter controls total runtime rather than model structure, so it is typically fixed across a grid search rather than varied. See :ref:`stopping-runtime-controls`.
 
 Description
 ~~~~~~~~~~~
@@ -18,6 +20,10 @@ When building a model, this option specifes the maximum runtime in seconds that 
 When performing a grid search, this option specifies the maximum runtime in seconds for the entire grid. This option can also be combined with ``max_runtime_secs`` in the model parameters. If ``max_runtime_secs`` is not set in the model parameters, then each model build is launched with a limit equal to the remainder of the grid time. On the other hand, if ``max_runtime_secs`` is set in the model parameters, then each build is launched with a limit equal to the minimum of the model time limit and the remaining time for the grid.
 
 Specifying ``max_runtime_secs=0`` disables this option, thus allowing for an unlimited amount of runtime.
+
+.. warning::
+	``max_runtime_secs`` cannot always produce a reproducible model for GBM, DRF, XGBoost, Isolation Forest, or Uplift DRF.
+
 
 Related Parameters
 ~~~~~~~~~~~~~~~~~~

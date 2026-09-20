@@ -7,7 +7,6 @@ import water.util.ArrayUtils;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Stream;
 
@@ -86,5 +85,7 @@ public abstract class ModelingSteps extends Iced<ModelingSteps> {
      */
     protected ModelingStep[] getOptionals() { return new ModelingStep[0]; }
     public abstract String getProvider();
+
+    protected void cleanup() {}
 
 }

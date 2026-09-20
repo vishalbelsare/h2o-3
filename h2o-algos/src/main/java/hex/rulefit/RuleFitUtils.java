@@ -1,9 +1,8 @@
 package hex.rulefit;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.List;
+import water.util.TwoDimTable;
+
+import java.util.*;
 import java.util.stream.Collectors;
 
 public class RuleFitUtils {
@@ -23,112 +22,140 @@ public class RuleFitUtils {
         }
         return pathNames;
     }
-
-    static Rule[] consolidateRules(Rule[] rules, boolean remove_duplicates) {
-        for (int i = 0; i < rules.length; i++) {
-            if (rules[i].conditions != null) { // linear rules doesn't need to consolidate
-                rules[i] = consolidateRule(rules[i], remove_duplicates);
-            }
-        }
-        
-        if (remove_duplicates)
-            return deduplicateRules(rules);
-        else
-            return rules;
-    }
-
-    static Rule consolidateRule(Rule rule, boolean remove_duplicates) {
-        List<Condition> consolidatedConditions = new ArrayList<>();
-
-        Condition[] conditions = rule.conditions;
-        List<String> varNames = new ArrayList<>();
-        for (int i = 0; i < conditions.length; i++) {
-            if (!varNames.contains(conditions[i].featureName)) {
-                varNames.add(conditions[i].featureName);
-            }
-        }
-        for (int i = 0; i < varNames.size(); i++) {
-            consolidatedConditions.addAll(consolidateConditionsByVar(conditions, varNames.get(i)));
-        }
-        
+    
+    static Rule[] deduplicateRules(Rule[] rules, boolean remove_duplicates) {
         if (remove_duplicates) {
-            // sort by feature name as a preparation for rules deduplication
-            rule.conditions = consolidatedConditions.stream()
-                    .sorted(Comparator.comparing(condition -> condition.featureName))
-                    .collect(Collectors.toList()).toArray(new Condition[0]);
-        } else {
-            rule.conditions = consolidatedConditions.toArray(new Condition[0]);
-        }
-        rule.languageRule = rule.generateLanguageRule();
-        return rule;
-    }
-
-    static List<Condition>  consolidateConditionsByVar(Condition[] conditions, String varname) {
-        List<Condition> currVarConditions = new ArrayList<>();
-        for (int i = 0; i < conditions.length; i++) {
-            if (varname.equals(conditions[i].featureName))
-                currVarConditions.add(conditions[i]);
-        }
-        if (currVarConditions.size() == 1) {
-            return currVarConditions;
-        } else {
-            Condition potentialLessThan = null;
-            Condition potentialGreaterThanOrEqual = null;
-            Condition potentialIn = null;
-            
-            for (int i = 0; i < currVarConditions.size(); i++) {
-                Condition currCondition = currVarConditions.get(i);
-                if (Condition.Operator.LessThan.equals(currCondition.operator)) {
-                    if (potentialLessThan == null) {
-                        potentialLessThan = currCondition;
+            List<Rule> transform = new ArrayList<>();
+            for (int i = 0; i < rules.length; i++) {
+                Rule currRule = rules[i];
+                if (currRule.conditions != null) {
+                    // non linear rules:
+                    if (!transform.contains(currRule)) {
+                        transform.add(currRule);
                     } else {
-                        potentialLessThan = potentialLessThan.expandBy(currCondition);
-                    }
-                } else if (Condition.Operator.GreaterThanOrEqual.equals(currCondition.operator)) {
-                    if (potentialGreaterThanOrEqual == null) {
-                        potentialGreaterThanOrEqual = currCondition;
-                    } else {
-                        potentialGreaterThanOrEqual = potentialGreaterThanOrEqual.expandBy(currCondition);
+                        for (int j = 0; j < transform.size(); j++) {
+                            if (i != j) {
+                                Rule ruleToExtend = transform.get(j);
+                                if (currRule.equals(ruleToExtend)) {
+                                    transform.remove(j);
+                                    Rule newRule = new Rule(ruleToExtend.conditions,  ruleToExtend.predictionValue, ruleToExtend.varName + ", " + currRule.varName,  ruleToExtend.coefficient + currRule.coefficient, ruleToExtend.support);
+                                    transform.add(newRule);
+                                    break;
+                                }
+                            }
+                        }
                     }
                 } else {
-                    assert Condition.Operator.In.equals(currCondition.operator);
-                    if (potentialIn == null) {
-                        potentialIn = currCondition;
-                    } else {
-                        potentialIn = potentialIn.expandBy(currCondition);
-                    }
+                    // linear rules:
+                    transform.add(currRule);
                 }
             }
-
-            List<Condition> currVarConsolidatedConditions = new ArrayList<>();
-
-            if (potentialLessThan != null)
-                currVarConsolidatedConditions.add(potentialLessThan);
-            if (potentialGreaterThanOrEqual != null)
-                currVarConsolidatedConditions.add(potentialGreaterThanOrEqual);
-            if (potentialIn != null)
-                currVarConsolidatedConditions.add(potentialIn);
-
-            return currVarConsolidatedConditions;
+            return transform.toArray(new Rule[0]);
+        } else {
+            return rules;
         }
     }
-    
-    static Rule[] deduplicateRules(Rule[] rules) {
-        List<Rule> list = Arrays.asList(rules);
 
-        // group by non linear rules
-        List<Rule> transform = list.stream()
-                .filter(rule -> rule.conditions != null)
-                .collect(Collectors.groupingBy(rule -> rule.languageRule))
-                .entrySet().stream()
-                .map(e -> e.getValue().stream()
-                        .reduce((r1,r2) -> new Rule(r1.conditions, r1.predictionValue, r1.varName + ", " + r2.varName, r1.coefficient + r2.coefficient)))
-                .map(f -> f.get())
-                .collect(Collectors.toList());
+    static Rule[] sortRules(Rule[] rules) {
+        Comparator<Rule> ruleAbsCoefficientComparator = Comparator.comparingDouble(Rule::getAbsCoefficient).reversed();
+        Arrays.sort(rules, ruleAbsCoefficientComparator);
+        return rules;
+    }
 
-        // add linear rules
-        transform.addAll(list.stream().filter(rule -> rule.conditions == null).collect(Collectors.toList()));
+    /** 
+     * Returns a ruleId. 
+     * If the ruleId is in form after deduplication:  "M0T0N1, M0T9N56, M9T34N56", meaning contains ", "
+     * finds only first rule (other are equivalents)
+     */
+    static String readRuleId(String ruleId) {
+        if (ruleId.contains(",")) {
+            return ruleId.split(",")[0];
+        } else {
+            return ruleId;
+        }
+    }
 
-        return transform.toArray(new Rule[0]);
+    static Rule[] getRules(HashMap<String, Double> glmCoefficients, RuleEnsemble ruleEnsemble, String[] classNames, int nclasses) {
+        // extract variable-coefficient map (filter out intercept and zero betas)
+        Map<String, Double> filteredRules = glmCoefficients.entrySet()
+                .stream()
+                .filter(e -> !("Intercept".equals(e.getKey()) || e.getKey().contains("Intercept_")) && 0 != e.getValue())
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+        List<Rule> rules = new ArrayList<>();
+        Rule rule;
+        for (Map.Entry<String, Double> entry : filteredRules.entrySet()) {
+            if (!entry.getKey().startsWith("linear.")) {
+                rule = ruleEnsemble.getRuleByVarName(getVarName(entry.getKey(), classNames, nclasses));
+            } else {
+                rule = new Rule(null, entry.getValue(), entry.getKey());
+                // linear rule applies to all the rows
+                rule.support = 1.0;
+            }
+            rule.setCoefficient(entry.getValue());
+            rules.add(rule);
+        }
+
+        return rules.toArray(new Rule[] {});
+    }
+
+    static private String getVarName(String ruleKey, String[] classNames, int nclasses) {
+        if (nclasses > 2) {
+            ruleKey = removeClassNameSuffix(ruleKey, classNames);
+        }
+        return ruleKey.substring(ruleKey.lastIndexOf(".") + 1);
+    }
+
+    private static String removeClassNameSuffix(String ruleKey, String[] classNames) {
+        for (int i = 0; i < classNames.length; i++) {
+            if (ruleKey.endsWith(classNames[i]))
+                return ruleKey.substring(0, ruleKey.length() - classNames[i].length() - 1);
+        }
+        return ruleKey;
+    }
+
+
+
+    static  TwoDimTable convertRulesToTable(Rule[] rules, boolean isMultinomial, boolean generateLanguageRule) {
+        List<String> colHeaders = new ArrayList<>();
+        List<String> colTypes = new ArrayList<>();
+        List<String> colFormat = new ArrayList<>();
+
+        colHeaders.add("variable");
+        colTypes.add("string");
+        colFormat.add("%s");
+        if (isMultinomial) {
+            colHeaders.add("class");
+            colTypes.add("string");
+            colFormat.add("%s");
+        }
+        colHeaders.add("coefficient");
+        colTypes.add("double");
+        colFormat.add("%.5f");
+        colHeaders.add("support");
+        colTypes.add("double");
+        colFormat.add("%.5f");
+        colHeaders.add("rule");
+        colTypes.add("string");
+        colFormat.add("%s");
+
+        final int rows = rules.length;
+        TwoDimTable table = new TwoDimTable("Rule Importance", null, new String[rows],
+                colHeaders.toArray(new String[0]), colTypes.toArray(new String[0]), colFormat.toArray(new String[0]), "");
+
+        for (int row = 0; row < rows; row++) {
+            int col = 0;
+            String varname = (rules[row]).varName;
+            table.set(row, col++, varname);
+            if (isMultinomial) {
+                String segments[] = varname.split("_");
+                table.set(row, col++, segments[segments.length - 1]);
+            }
+            table.set(row, col++, (rules[row]).coefficient);
+            table.set(row, col++, (rules[row]).support);
+            table.set(row, col, generateLanguageRule ? rules[row].generateLanguageRule() : rules[row].languageRule);
+        }
+
+        return table;
     }
 }

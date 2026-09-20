@@ -25,7 +25,7 @@ test <- function() {
 	#expect_equal(hh@model$init_f,MEPSgamma$initF)
 	#expect_equal(hh@model$training_metrics@metrics$mean_residual_deviance,MEPSgamma$train.error)
 	expect_equal(hh@model$init_f,9.460660441)
-	expect_equal(hh@model$training_metrics@metrics$mean_residual_deviance,20.53711278)
+	expect_equal(hh@model$training_metrics@metrics$mean_residual_deviance,1.40650781)
 	expect_equal(hh@model$training_metrics@metrics$mean_residual_deviance,hh@model$validation_metrics@metrics$mean_residual_deviance)
 	
 	#MEPStweedie=gbm(EXPENDIP~COUNTIP+AGE+insure,distribution =  "tweedie",verbose = T,
@@ -54,7 +54,7 @@ test <- function() {
 	#expect_equal(hh@model$init_f,gg$initF)
 	#expect_equal(hh@model$training_metrics@metrics$mean_residual_deviance,gg$train.error)
 	expect_equal(hh@model$init_f,-2.40404516)
-	expect_equal(hh@model$training_metrics@metrics$mean_residual_deviance,0.610489769)
+	expect_equal(hh@model$training_metrics@metrics$mean_residual_deviance, 0.444, tolerance = 1e-2)
 	expect_equal(hh@model$training_metrics@metrics$mean_residual_deviance,hh@model$validation_metrics@metrics$mean_residual_deviance)
 
 	

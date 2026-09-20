@@ -3,12 +3,14 @@ package hex.tree.isoforextended;
 import hex.Model;
 import hex.ModelCategory;
 import hex.ModelMetrics;
-import hex.tree.CompressedTree;
+import hex.ScoreKeeper;
 import hex.tree.isofor.ModelMetricsAnomaly;
 import hex.tree.isoforextended.isolationtree.CompressedIsolationTree;
 import org.apache.log4j.Logger;
 import water.*;
 import water.fvec.Frame;
+
+import static hex.genmodel.algos.isoforextended.ExtendedIsolationForestMojoModel.anomalyScore;
 
 /**
  * 
@@ -44,30 +46,22 @@ public class ExtendedIsolationForestModel extends Model<ExtendedIsolationForestM
         assert _output._iTreeKeys != null : "Output has no trees, check if trees are properly set to the output.";
         // compute score for given point
         double pathLength = 0;
+        int numberOfTrees = 0;
         for (Key<CompressedIsolationTree> iTreeKey : _output._iTreeKeys) {
+            if (iTreeKey == null) continue;
+            numberOfTrees++;
             CompressedIsolationTree iTree = DKV.getGet(iTreeKey);
             double iTreeScore = iTree.computePathLength(data);
             pathLength += iTreeScore;
             LOG.trace("iTreeScore " + iTreeScore);
         }
-        pathLength = pathLength / _output._ntrees;
+        pathLength = pathLength / numberOfTrees;
         LOG.trace("Path length " + pathLength);
-        double anomalyScore = anomalyScore(pathLength);
+        double anomalyScore = anomalyScore(pathLength, _output._sample_size);
         LOG.trace("Anomaly score " + anomalyScore);
         preds[0] = anomalyScore;
         preds[1] = pathLength;
         return preds;
-    }
-
-    /**
-     * Anomaly score computation comes from Equation 1 in paper
-     *
-     * @param pathLength path from root to leaf
-     * @return anomaly score in range [0, 1]
-     */
-    private double anomalyScore(double pathLength) {
-        return Math.pow(2, -1 * (pathLength / 
-                CompressedIsolationTree.averagePathLengthOfUnsuccessfulSearch(_output._sample_size)));
     }
 
     public static class ExtendedIsolationForestParameters extends Model.Parameters {
@@ -107,11 +101,35 @@ public class ExtendedIsolationForestModel extends Model<ExtendedIsolationForestM
          */
         public int _sample_size;
 
+        /**
+         * Score every so many trees (no matter what)
+         */
+        public int _score_tree_interval;
+
+        /**
+         * Disable calculating training metrics (expensive on large datasets).
+         */
+        public boolean _disable_training_metrics;
+
+        /**
+         * For _initial_score_interval milliseconds - score each iteration of the algorithm.
+         */
+        public int _initial_score_interval = 4000;
+
+        /**
+         * After each _score_interval milliseconds - run scoring
+         *
+         * But limit the scoring time consumption to 10% of whole training time.
+         */
+        public int _score_interval = 4000;
+
         public ExtendedIsolationForestParameters() {
             super();
             _ntrees = 100;
             _sample_size = 256;
             _extension_level = 0;
+            _score_tree_interval = 0;
+            _disable_training_metrics = true;
         }        
     }
 
@@ -119,6 +137,8 @@ public class ExtendedIsolationForestModel extends Model<ExtendedIsolationForestM
 
         public int _ntrees;
         public long _sample_size;
+        public ScoreKeeper[] _scored_train;
+        public long[] _training_time_ms;
         
         public Key<CompressedIsolationTree>[] _iTreeKeys;
         
@@ -156,5 +176,10 @@ public class ExtendedIsolationForestModel extends Model<ExtendedIsolationForestM
             ab.getKey(iTreeKey, fs);
         }
         return super.readAll_impl(ab,fs);
+    }
+
+    @Override
+    public ExtendedIsolationForestMojoWriter getMojo() {
+        return new ExtendedIsolationForestMojoWriter(this);
     }
 }

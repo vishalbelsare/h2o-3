@@ -1,9 +1,11 @@
 package hex.genmodel;
 
+import hex.genmodel.algos.isotonic.IsotonicCalibrator;
 import hex.genmodel.descriptor.ModelDescriptor;
 import hex.genmodel.utils.StringEscapeUtils;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.Charset;
 import java.util.Arrays;
@@ -14,7 +16,7 @@ import java.util.zip.ZipOutputStream;
 
 public abstract class AbstractMojoWriter {
   /**
-   * Reference to the model being written. Use this in the subclasses to retreive information from your model.
+   * Reference to the model being written. Use this in the subclasses to retrieve information from your model.
    */
   private ModelDescriptor model;
 
@@ -75,6 +77,21 @@ public abstract class AbstractMojoWriter {
 
   protected final void writekv(String key, float[] value) throws IOException {
     writekv(key, Arrays.toString(value));
+  }
+
+  protected final void write(IsotonicCalibrator calibrator) throws IOException {
+    writekv("calib_min_x", calibrator._min_x);
+    writekv("calib_max_x", calibrator._max_x);
+    writeblob("calib/thresholds_x", calibrator._thresholds_x);
+    writeblob("calib/thresholds_y", calibrator._thresholds_y);
+  }
+
+  private void writeblob(String filename, double[] doubles) throws IOException {
+    ByteBuffer bb = ByteBuffer.wrap(new byte[4 + doubles.length * 8]);
+    bb.putInt(doubles.length);
+    for (double val : doubles)
+      bb.putDouble(val);
+    writeblob(filename, bb.array());
   }
 
   /**
@@ -182,6 +199,9 @@ public abstract class AbstractMojoWriter {
     writekv("n_domains", n_categoricals);
     if (model.offsetColumn() != null) {
       writekv("offset_column", model.offsetColumn());
+    }
+    if (model.foldColumn() != null) {
+      writekv("fold_column", model.foldColumn());
     }
     writekv("balance_classes", model.balanceClasses());
     writekv("default_threshold", model.defaultThreshold());

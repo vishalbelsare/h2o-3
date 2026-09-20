@@ -1671,7 +1671,7 @@ To view the results, click the View button. The output for the Deep Learning mod
 
 - **Does each Mapper task work on a separate neural-net model that is combined during reduction, or is each Mapper manipulating a shared object that's persistent across nodes?**
 
-   Neither; there's one model per compute node, so multiple Mappers/threads share one model, which is why H2O is not reproducible unless a small dataset is used and `force_load_balance=F` or `reproducible=T`, which effectively rebalances to a single chunk and leads to only one thread to launch a `map()`. The current behavior is simple model averaging; between-node model averaging via "Elastic Averaging" is currently [in progress](https://0xdata.atlassian.net/browse/HEXDEV-206). 
+   Neither; there's one model per compute node, so multiple Mappers/threads share one model, which is why H2O is not reproducible unless a small dataset is used and `force_load_balance=F` or `reproducible=T`, which effectively rebalances to a single chunk and leads to only one thread to launch a `map()`. The current behavior is simple model averaging; between-node model averaging via "Elastic Averaging" is currently [in progress](https://github.com/h2oai/h2o-3/issues/13535). 
 
 - **Is the loss function and backpropagation performed after each individual training sample, each iteration, or at the epoch level?**
 
@@ -1879,7 +1879,7 @@ The training rows receive a prediction of `0` (more on this below) as well as `0
 
 ## Combining holdout predictions
 
-The frame of cross-validated predictions is simply the superposition of the individual predictions. [Here's an example from R](https://0xdata.atlassian.net/browse/PUBDEV-2236):
+The frame of cross-validated predictions is simply the superposition of the individual predictions. [Here's an example from R](https://github.com/h2oai/h2o-3/issues/15145):
 
 ``` 
 library(h2o)
@@ -1902,7 +1902,7 @@ fit@model$cross_validation_predictions$name
 # Each fold's preds are stored in a N x 1 col, where the row values for non-active folds are set to zero
 # So we will compress this into a single 1-col H2O Frame (easier to digest)
 
-nfolds <- fit@parameters$nfolds
+nfolds <- fit@params$actual$nfolds
 predlist <- sapply(1:nfolds, function(v) h2o.getFrame(fit@model$cross_validation_predictions[[v]]$name)$predict, simplify = FALSE)
 cvpred_sparse <- h2o.cbind(predlist)  # N x V Hdf with rows that are all zeros, except corresponding to the v^th fold if that rows is associated with v
 pred <- apply(cvpred_sparse, 1, sum)  # These are the cross-validated predicted cluster IDs for each of the 1:N observations
@@ -1914,7 +1914,7 @@ This can be extended to other family types as well (multinomial, binomial, regre
 # helper function
 .compress_to_cvpreds <- function(h2omodel, family) {
   # return the frame_id of the resulting 1-col Hdf of cvpreds for learner l
-  V <- h2omodel@allparameters$nfolds
+  V <- h2omodel@params$actual$nfolds
   if (family %in% c("bernoulli", "binomial")) {
     predlist <- sapply(1:V, function(v) h2o.getFrame(h2omodel@model$cross_validation_predictions[[v]]$name)[,3], simplify = FALSE)
   } else {

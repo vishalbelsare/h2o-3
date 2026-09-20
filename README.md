@@ -1,10 +1,14 @@
 # H2O
 
-[![Join the chat at https://gitter.im/h2oai/h2o-3](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/h2oai/h2o-3?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
+For any question not answered in this file or in [H2O-3 Documentation](https://docs.h2o.ai/h2o/latest-stable/h2o-docs), please use:
+
+[![Ask on GitHub](https://img.shields.io/github/discussions/h2oai/h2o-3.svg?logo=github&label=Discussions%20Q%26A&color=FFE600)](https://github.com/h2oai/h2o-3/discussions/categories/q-a)
+[![Ask on StackOverflow](https://img.shields.io/stackexchange/stackoverflow/t/h2o?logo=stackoverflow&label=H2O%20on%20StackOverflow&color=f7a664)](http://stackoverflow.com/questions/tagged/h2o)
+[![Ask on Gitter](https://img.shields.io/gitter/room/h2oai/h2o-3?logo=gitter&logoColor=red&label=H2O%20chatroom&color=b5b5b5)](https://gitter.im/h2oai/h2o-3?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
 H2O is an in-memory platform for distributed, scalable machine learning. H2O uses familiar interfaces like R, Python, Scala, Java, JSON and the Flow notebook/web interface, and works seamlessly with big data technologies like Hadoop and Spark. H2O provides implementations of many popular [algorithms](http://docs.h2o.ai/h2o/latest-stable/h2o-docs/data-science.html) such as Generalized Linear Models (GLM), Gradient Boosting Machines (including XGBoost), Random Forests, Deep Neural Networks, Stacked Ensembles, Naive Bayes, Generalized Additive Models (GAM), Cox Proportional Hazards, K-Means, PCA, Word2Vec, as well as a fully automatic machine learning algorithm ([H2O AutoML](http://docs.h2o.ai/h2o/latest-stable/h2o-docs/automl.html)). 
 
-H2O is extensible so that developers can add data transformations and custom algorithms of their choice and access them through all of those clients.  H2O models can be [downloaded](http://docs.h2o.ai/h2o/latest-stable/h2o-docs/save-and-load-model.html) and loaded into H2O memory for scoring, or exported into POJO or MOJO format for extemely fast scoring in [production](http://docs.h2o.ai/h2o/latest-stable/h2o-docs/productionizing.html).  More information can be found in the [H2O User Guide](http://docs.h2o.ai/h2o/latest-stable/h2o-docs/index.html).
+H2O is extensible so that developers can add data transformations and custom algorithms of their choice and access them through all of those clients.  H2O models can be [downloaded](http://docs.h2o.ai/h2o/latest-stable/h2o-docs/save-and-load-model.html) and loaded into H2O memory for scoring, or exported into POJO or MOJO format for extremely fast scoring in [production](http://docs.h2o.ai/h2o/latest-stable/h2o-docs/productionizing.html).  More information can be found in the [H2O User Guide](http://docs.h2o.ai/h2o/latest-stable/h2o-docs/index.html).
 
 H2O-3 (this repository) is the third incarnation of H2O, and the successor to [H2O-2](https://github.com/h2oai/h2o-2).  
 
@@ -20,8 +24,8 @@ H2O-3 (this repository) is the third incarnation of H2O, and the successor to [H
 * [Building H2O on Hadoop](#BuildingHadoop)
 * [Sparkling Water](#Sparkling)
 * [Documentation](#Documentation)
+* [Privacy & Telemetry](#Privacy)
 * [Citing H2O](#Citing)
-* [Roadmap](#Roadmap)
 * [Community](#Community) / [Advisors](#Advisors) / [Investors](#Investors)
 
 <a name="Downloading"></a>
@@ -48,36 +52,27 @@ More info on downloading & installing H2O is available in the [H2O User Guide](h
 <a name="Resources"></a>
 ## 2. Open Source Resources
 
-Most people interact with three or four primary open source resources:  **GitHub** (which you've already found), **JIRA** (for bug reports and issue tracking), **Stack Overflow** for H2O code/software-specific questions, and **h2ostream** (a Google Group / email discussion forum) for questions not suitable for Stack Overflow.  There is also a **Gitter** H2O developer chat group, however for archival purposes & to maximize accessibility, we'd prefer that standard H2O Q&A be conducted on Stack Overflow.
+Most people interact with three or four primary open source resources:  **GitHub** (which you've already found), **GitHub issues** (for bug reports and issue tracking), **Stack Overflow** for H2O code/software-specific questions, and **h2ostream** (a Google Group / email discussion forum) for questions not suitable for Stack Overflow.  There is also a **Gitter** H2O developer chat group, however for archival purposes & to maximize accessibility, we'd prefer that standard H2O Q&A be conducted on Stack Overflow.
 
 <a name="IssueTracking"></a>
 ### 2.1 Issue Tracking and Feature Requests
 
-> (Note: There is only one issue tracking system for the project.  GitHub issues are not enabled; you must use JIRA.)
+You can browse and create new issues in our GitHub repository:  <https://github.com/h2oai/h2o-3>
 
-You can browse and create new issues in our open source **JIRA**:  <http://jira.h2o.ai>
+*  You can **browse** and search for **issues** without logging in to Github:
+    1. Click the `Issues` tab on the top of the page
+    2. Apply filter to search for particular issues 
+*  To **create** an **issue** (either a bug or a feature request):
+    *  Create H2O-3 issues on the page [https://github.com/h2oai/h2o-3/issues/new/choose](https://github.com/h2oai/h2o-3/issues/new/choose).  (Note: Sparkling Water questions should be addressed under the [Sparkling Water](https://github.com/h2oai/sparkling-water/issues) repository.)
 
-*  You can **browse** and search for **issues** without logging in to JIRA:
-    1.  Click the `Issues` menu
-    1.  Click `Search for issues`
-*  To **create** an **issue** (either a bug or a feature request), please create yourself an account first:
-    1.  Click the `Log In` button on the top right of the screen
-    1.  Click `Create an acccount` near the bottom of the login box
-    1.  Once you have created an account and logged in, use the `Create` button on the menu to create an issue
-    1.  Create H2O-3 issues in the [PUBDEV](https://0xdata.atlassian.net/projects/PUBDEV/issues) project.  (Note: Sparkling Water questions should be filed under the [SW](https://0xdata.atlassian.net/projects/SW/issues) project.)
-*	You can also vote for feature requests and/or other issues. Voting can help H2O prioritize the features that are included in each release.
-	1. Go to the [H2O JIRA page](https://0xdata.atlassian.net/).
-	2. Click **Log In** to either log in or create an account if you do not already have one.
-	3. Search for the feature that you want to prioritize, or create a new feature.
-	4. Click on the **Vote for this issue** link. This is located on the right side of the issue under the **People** section.
 
 <a name="OpenSourceResources"></a>
 ### 2.2 List of H2O Resources
 
 *  GitHub
     * <https://github.com/h2oai/h2o-3>
-*  JIRA -- file bug reports / track issues here
-    * The [PUBDEV](https://0xdata.atlassian.net/projects/PUBDEV/issues) project contains issues for the current H2O-3 project)
+*  GitHub issues -- file bug reports / track issues here
+    * The <https://github.com/h2oai/h2o-3/issues> page contains issues for the current H2O-3 project)
 *  Stack Overflow -- ask all code/software questions here
     * <http://stackoverflow.com/questions/tagged/h2o>
 *  Cross Validated (Stack Exchange) -- ask algorithm/theory questions here
@@ -89,12 +84,10 @@ You can browse and create new issues in our open source **JIRA**:  <http://jira.
     * <https://gitter.im/h2oai/h2o-3>    
 *  Documentation
     * H2O User Guide (main docs): <http://docs.h2o.ai/h2o/latest-stable/h2o-docs/index.html>
-    * All H2O documenation links: <http://docs.h2o.ai>
+    * All H2O documentation links: <http://docs.h2o.ai>
     * Nightly build page (nightly docs linked in page): <https://s3.amazonaws.com/h2o-release/h2o/master/latest.html>
 *  Download (pre-built packages)
     * <http://h2o.ai/download>
-*  Jenkins (H2O build and test system)
-    * <http://test.h2o.ai>
 *  Website
     * <http://h2o.ai>
 *  Twitter -- follow us for updates and H2O news!
@@ -150,7 +143,6 @@ Building `h2o` requires a properly set up R environment with [required packages]
 
 ```
 grip
-future
 tabulate
 requests
 wheel
@@ -218,7 +210,7 @@ git pull
 
  - We recommend using `./gradlew clean` after each `git pull`.
 
-- Skip tests by adding `-x test` at the end the gradle build command line.  Tests typically run for 7-10 minutes on a Macbook Pro laptop with 4 CPUs (8 hyperthreads) and 16 GB of RAM.
+- Skip tests by adding `-x test` at the end the Gradle build command line.  Tests typically run for 7-10 minutes on a MacBook Pro laptop with 4 CPUs (8 hyperthreads) and 16 GB of RAM.
 
 - Syncing smalldata is not required after each pull, but if tests fail due to missing data files, then try `./gradlew syncSmalldata` as the first troubleshooting step.  Syncing smalldata downloads data files from AWS S3 to the smalldata directory in your workspace.  The sync is incremental.  Do not check in these files.  The smalldata directory is in .gitignore.  If you do not run any tests, you do not need the smalldata directory.
 - Running `./gradlew syncRPackages` is supported on Windows, OS X, and Linux, and is strongly recommended but not required. `./gradlew syncRPackages` ensures a complete and consistent environment with pre-approved versions of the packages required for tests and builds. The packages can be installed manually, but we recommend setting an ENV variable and using `./gradlew syncRPackages`. To set the ENV variable, use the following format (where `${WORKSPACE}` can be any path):
@@ -235,6 +227,23 @@ git pull
 open target/docs-website/h2o-docs/index.html
 ```
 
+#### Recipe 5:  Building using a Makefile
+
+Root of the git repository contains a Makefile with convenient shortcuts for frequent build targets used in development.
+To build `h2o.jar` while skipping tests and also the building of alternative assemblies, execute 
+
+```
+make
+```
+
+To build `h2o.jar` using the minimal assembly, run
+```
+make minimal
+```
+
+The minimal assembly is well suited for development of H2O machine learning algorithms. It doesn't bundle some heavyweight
+dependencies (like Hadoop) and using it saves build time as well as need to download large libraries from Maven repositories.
+
 <a name="SetupWin"></a>
 ### 4.3. Setup on Windows
 
@@ -243,7 +252,7 @@ open target/docs-website/h2o-docs/index.html
 
 ##### Step 2: Install required Python packages:
 
-    pip install grip future tabulate wheel
+    pip install grip tabulate wheel
 
 ##### Step 3: Install JDK
 
@@ -283,7 +292,7 @@ for (pkg in pkgs) {
 ```
 Note that [libcurl](http://curl.haxx.se) is required for installation of the **RCurl** R package.
 
-Note that this packages don't cover running tests, they for building H2O only.
+Note that this packages don't cover running tests, they are for building H2O only.
 
 Finally, install [Rtools](http://cran.r-project.org/bin/windows/Rtools/), which is a collection of command line tools to facilitate R development on Windows.
 >**NOTE**: During Rtools installation, do **not** install Cygwin.dll.
@@ -328,7 +337,7 @@ Using Homebrew:
 
     brew install node
 
-Otherwise, install from the [NodeJS website](http://nodejs.org/download/).
+Otherwise, install from the [Node.js website](http://nodejs.org/download/).
 
 ##### Step 3. Install R and the required packages:
 
@@ -368,7 +377,7 @@ Install pip package manager:
 
 Next install required packages:
 
-    sudo pip install wheel requests future tabulate  
+    sudo pip install wheel requests tabulate  
 
 ##### Step 5. Git Clone [h2o-3](https://github.com/h2oai/h2o-3.git)
 
@@ -435,7 +444,7 @@ Download and update h2o-3 source codes:
 
 ##### Step 1. Install Node.js
 
-    curl -sL https://deb.nodesource.com/setup_10.x | sudo bash -
+    curl -sL https://deb.nodesource.com/setup_16.x | sudo bash -
     sudo apt-get install -y nodejs
 
 ##### Steps 2-4. Follow steps 2-4 for Ubuntu 14.04 (above)
@@ -507,11 +516,18 @@ Pre-built H2O-on-Hadoop zip files are available on the [download page](http://h2
 To build H2O with Hadoop support yourself, first install sphinx for python: `pip install sphinx`
 Then start the build by entering  the following from the top-level h2o-3 directory:
 
-    (export BUILD_HADOOP=1; ./gradlew build -x test)
-    ./gradlew dist
+    export BUILD_HADOOP=1;
+    ./gradlew build -x test;
+    ./gradlew dist;
 
 This will create a directory called 'target' and generate zip files there.  Note that `BUILD_HADOOP` is the default behavior when the username is `jenkins` (refer to `settings.gradle`); otherwise you have to request it, as shown above.
 
+To build the zip files only for selected distributions use the `H2O_TARGET` env variable together with `BUILD_HADOOP`, for example:
+
+    export BUILD_HADOOP=1;
+    export H2O_TARGET=hdp2.5,hdp2.6
+    ./gradlew build -x test;
+    ./gradlew dist;
 
 ### Adding support for a new version of Hadoop
 
@@ -621,7 +637,7 @@ Sparkling Water combines two open-source technologies: Apache Spark and the H2O 
 <a name="Documentation"></a>
 ## 8. Documentation
 
-### Documenation Homepage
+### Documentation Homepage
 
 The main H2O documentation is the [H2O User Guide](http://docs.h2o.ai/h2o/latest-stable/h2o-docs/index.html).  Visit <http://docs.h2o.ai> for the top-level introduction to documentation on H2O projects.
 
@@ -644,8 +660,29 @@ If the build fails, try `gradlew clean`, then `git clean -f`.
 Documentation for each bleeding edge nightly build is available on the [nightly build page](http://s3.amazonaws.com/h2o-release/h2o/master/latest.html).
 
 
+<a name="Privacy"></a>
+## 9. Privacy & Telemetry
+
+H2O-3 can send anonymous usage telemetry to help us prioritize features and platforms. It is **opt-in and off by default** — nothing is sent unless you turn it on. Here is what happens when enabled:
+
+- **Purpose.** Limited operational/runtime telemetry, used only in aggregate to operate, secure, support, maintain, and improve H2O-3 — common deployment patterns, compatibility/support prioritization, and abuse detection. Never for sales prospecting, lead identification, or user surveillance.
+- **Default is off (opt-in).** Nothing is sent until you explicitly turn telemetry on; the choice is remembered across sessions.
+- **One small ping per `h2o.init()`** plus one per major user action (training, scoring, MOJO download, upload, import, save/load, AutoML). Each ping is ~200 bytes of JSON over HTTPS.
+- **Standalone & Hadoop clusters too.** A cluster started directly with `java -jar h2o.jar` or `hadoop jar h2odriver.jar` can send one ping when the cluster forms — once telemetry is turned on. Same fields.
+- **What's sent:** version strings, OS, an ephemeral session UUID regenerated on every `h2o.init()`, a Unix timestamp, the algorithm name, and coarse bucket labels for counts (rows, columns, durations, sizes) — reported as ranges, not raw integers. One exception: a small cluster's exact node count (1–16) is sent, since 1-node vs 4-node is operationally meaningful; larger clusters are bucketed.
+- **What's never sent:** code, dataset contents, prompts, model inputs or outputs, training data, prediction values, file paths or URLs, dataset/model names, column names, hyperparameter values, hostnames, usernames, email addresses, precise location, or any other customer business data.
+- **IP addresses:** inherently visible to any HTTPS request; the receiver may use them transiently for coarse geographic region and network attribution, and does not persist them. The payload itself contains no location data.
+- **Turn it on** — any of the following enables telemetry:
+  - **Programmatic, persistent:** call `h2o.set_telemetry(True)` (`h2o.set_telemetry(TRUE)` in R), and read the state with `h2o.telemetry_enabled()`. Applies immediately and is saved under `~/.h2oai` so later sessions honor it.
+  - **This session only:** pass `telemetry=True` (Python) / `telemetry = TRUE` (R) to `h2o.init()` or `h2o.connect()`.
+  - **Config file:** add `general.telemetry = true` under `[general]` in `~/.h2oconfig`.
+  - **JVM cluster:** start it with `-Dsys.ai.h2o.telemetry.disabled=false` (off unless this flag is explicitly set to false).
+- **Keep it off / turn it back off** — `DO_NOT_TRACK=1` is a hard opt-out that always wins (honored by Python, R, and the JVM server); or use `h2o.set_telemetry(False)`, `telemetry=False`, `general.telemetry = false`, or (JVM) `-Dsys.ai.h2o.telemetry.disabled=true`.
+- **Fire-and-forget.** Every call runs on a background task with a 2-second timeout. If the receiver is unreachable, your code returns exactly as if telemetry never happened — never blocks, never raises, never retries.
+
+
 <a name="Citing"></a>
-## 9. Citing H2O
+## 10. Citing H2O
 
 If you use H2O as part of your workflow in a publication, please cite your H2O resource(s) using the following BibTex entry:
 
@@ -684,33 +721,10 @@ Arora, A., Candel, A., Lanford, J., LeDell, E., and Parmar, V. (Oct. 2016). _Dee
 
 Click, C., Lanford, J., Malohlava, M., Parmar, V., and Roark, H. (Oct. 2016). _Gradient Boosted Models with H2O_. <http://docs.h2o.ai/h2o/latest-stable/h2o-docs/booklets/GBMBooklet.pdf>.
 
-<a name="Roadmap"></a>
-## 10. Roadmap
-
-### H2O 3.36.01 - Winter 2021
-
-* [[PUBDEV-4940]](https://h2oai.atlassian.net/browse/PUBDEV-4940) Uplift Trees
-* [[PUBDEV-8074]](https://h2oai.atlassian.net/browse/PUBDEV-8074) Admissible ML - Infogram
-* RuleFit improvements (multinomial support, rule deduplication and consolidation)
-* Backward elimination in MAXR
-* Improved support for CDP (S3A with IDBroker)
-* Support for Java 16 and 17, Python 3.8
-
-### H2O 3.38.01 - Spring 2022
-
-* [[PUBDEV-8074]](https://h2oai.atlassian.net/browse/PUBDEV-8074) Admissible ML - stage 2 (algos)
-* Multi-Output Regression in Deep Learning
-* GAM Improvements (support for Monotonic Splines)
-* XGBoost Upgrade
-* Data Ingest Improvements (Secured Hive in Standalone/K8S)
-* Extended Isolation Forest MOJO
-* Uplift MOJO
-* New features ICE plots
-
 <a name="Community"></a>
 ## 11. Community
 
-H2O has been built by a great many number of contributors over the years both within H2O.ai (the company) and the greater open source community.  You can begin to contribute to H2O by answering [Stack Overflow](http://stackoverflow.com/questions/tagged/h2o) questions or [filing bug reports](https://0xdata.atlassian.net/projects/PUBDEV/issues).  Please join us!  
+H2O has been built by a great many number of contributors over the years both within H2O.ai (the company) and the greater open source community.  You can begin to contribute to H2O by answering [Stack Overflow](http://stackoverflow.com/questions/tagged/h2o) questions or [filing bug reports](https://github.com/h2oai/h2o-3/issues).  Please join us!  
 
 
 ### Team & Committers
@@ -790,6 +804,10 @@ Jan Jendrusak
 Sebastien Poirier
 Tomáš Frýda
 Ard Kelmendi
+Yuliia Syzon
+Adam Valenta
+Marek Novotny
+Zuzana Olajcova
 ```
 
 <a name="Advisors"></a>

@@ -17,5 +17,18 @@ public class ValNums extends Val {
   @Override public int type() { return NUMS; }
   @Override public boolean isNums() { return true; }
   @Override public double[] getNums() { return _ds; }
+  @Override public String getStr() {
+    if (isEmpty())
+      return null;
+    return super.getStr();
+  }
   @Override public String toString() { return Arrays.toString(_ds); }
+
+  @Override
+  public String[] getStrs() {
+    if (_ds.length == 0)
+      return new String[0];
+    else
+      return super.getStrs();
+  }
 }

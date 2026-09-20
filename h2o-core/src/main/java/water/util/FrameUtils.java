@@ -15,10 +15,7 @@ import water.persist.PersistManager;
 import java.io.*;
 import java.net.URI;
 import java.net.URL;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Random;
+import java.util.*;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -60,14 +57,21 @@ public class FrameUtils {
   }
 
   public static Key eagerLoadFromHTTP(String path) throws IOException {
-    java.net.URL url = new URL(path);
-    Key destination_key = Key.make(path);
-    java.io.InputStream is = url.openStream();
+    return eagerLoadFromURL(path, new URL(path));
+  }
+
+  public static Key<?> eagerLoadFromURL(String sourceId, URL url) throws IOException {
+    try (InputStream is = url.openStream()) {
+      return eagerLoadFromInputStream(sourceId, is);
+    }
+  }
+
+  private static Key<?> eagerLoadFromInputStream(String sourceId, InputStream is) throws IOException {
+    Key<?> destination_key = Key.make(sourceId);
     UploadFileVec.ReadPutStats stats = new UploadFileVec.ReadPutStats();
     UploadFileVec.readPut(destination_key, is, stats);
     return destination_key;
   }
-
 
   public static Frame parseFrame(Key okey, ParseSetup parseSetup, URI ...uris) throws IOException {
     if (uris == null || uris.length == 0) {
@@ -343,6 +347,8 @@ public class FrameUtils {
     }
   }
 
+
+
   public static class ExportTaskDriver extends H2O.H2OCountedCompleter<ExportTaskDriver> {
     private static int BUFFER_SIZE = 8 * 1024 * 1024;
     private static long DEFAULT_TARGET_PART_SIZE = 134217728L; // 128MB, default HDFS block size
@@ -487,7 +493,7 @@ public class FrameUtils {
 
       @Override
       public void releaseCache(ChunkExportTask task, int cid) {
-        Key ck = Vec.chunkKey(_vecKey, cid);
+        Key<?> ck = Vec.chunkKey(_vecKey, cid);
         DKV.remove(ck);
       }
     }
@@ -521,7 +527,7 @@ public class FrameUtils {
      * Trivial CSV file size estimator. Uses the first line of each non-empty chunk to estimate the size of the chunk.
      * The total estimated size is the total of the estimated chunk sizes.
      */
-    class EstimateSizeTask extends MRTask<EstimateSizeTask> {
+    static class EstimateSizeTask extends MRTask<EstimateSizeTask> {
       // IN
       private final Frame.CSVStreamParams _parms;
       // OUT
@@ -537,7 +543,7 @@ public class FrameUtils {
         if (cs[0]._len == 0) return;
         try (Frame.CSVStream is = new Frame.CSVStream(cs, null, 1, _parms)) {
           _nNonEmpty++;
-          _size += is.getCurrentRowSize() * cs[0]._len;
+          _size += (long) is.getCurrentRowSize() * cs[0]._len;
         } catch (IOException e) {
           throw new RuntimeException(e);
         }
@@ -568,7 +574,7 @@ public class FrameUtils {
         os.write(bytes, 0, count);
         int workDone = is._curChkIdx - curChkIdx;
         if (workDone > 0) {
-          if (_j.stop_requested()) throw new Job.JobCancelledException();
+          if (_j.stop_requested()) throw new Job.JobCancelledException(_j);
           _j.update(workDone);
           curChkIdx = is._curChkIdx;
         }
@@ -1226,8 +1232,50 @@ public class FrameUtils {
       nc[k].addNum(betaConstraints.vec(k).at(id));
     }
   }
-  
-  public static Frame encodeBetaConstraints(Key key, String[] coefNames, String[] coefOriginalNames, Frame betaConstraints) {
+
+  public static class ExpandCatBetaConstraints extends MRTask<ExpandCatBetaConstraints> {
+    public final Frame _trainFrame;
+    public final Frame _betaCS;
+
+    public ExpandCatBetaConstraints(Frame betaCs, Frame train) {
+      _trainFrame = train;
+      _betaCS = betaCs;
+    }
+
+    @Override
+    public void map(Chunk[] chunks, NewChunk[] newChunks) {
+      int chkLen = chunks[0]._len;
+      int chkCol = chunks.length;
+      BufferedString tempStr = new BufferedString();
+      List<String> trainColNames = Arrays.asList(_trainFrame.names());
+      String[] colTypes = _trainFrame.typesStr();
+      for (int rowIndex=0; rowIndex<chkLen; rowIndex++) {
+        String cName = chunks[0].atStr(tempStr, rowIndex).toString();
+        int trainColNumber = trainColNames.indexOf(cName);
+        if (trainColNumber < 0 && "intercept".equals(cName))
+          throw new IllegalArgumentException("beta constraints cannot be applied to the intercept");
+        String csTypes = colTypes[trainColNumber];
+        if ("Enum".equals(csTypes)) {
+          String[] domains = _trainFrame.vec(trainColNumber).domain();
+          int domainLen = domains.length;
+          for (int repIndex = 0; repIndex < domainLen; repIndex++) {
+            String newCSName = cName+'.'+domains[repIndex];
+            newChunks[0].addStr(newCSName);
+            for (int colIndex = 1; colIndex < chkCol; colIndex++) {
+              newChunks[colIndex].addNum(chunks[colIndex].atd(rowIndex));
+            }
+          }
+        } else {  // copy over non-enum beta constraints
+          newChunks[0].addStr(chunks[0].atStr(tempStr, rowIndex).toString());
+          for (int colIndex = 1; colIndex < chkCol; colIndex++) {
+            newChunks[colIndex].addNum(chunks[colIndex].atd(rowIndex));
+          }
+        }
+      }
+    }
+  }
+
+    public static Frame encodeBetaConstraints(Key key, String[] coefNames, String[] coefOriginalNames, Frame betaConstraints) {
     int ncols = betaConstraints.numCols();
     AppendableVec[] appendableVecs = new AppendableVec[ncols];
     NewChunk ncs[] = new NewChunk[ncols];
@@ -1286,5 +1334,5 @@ public class FrameUtils {
     }
     return chunks;
   }
-
+  
 }

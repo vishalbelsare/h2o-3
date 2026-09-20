@@ -10,7 +10,6 @@ Local server.
 :copyright: (c) 2016 H2O.ai
 :license:   Apache License Version 2.0 (see LICENSE for details)
 """
-from __future__ import absolute_import, division, print_function, unicode_literals
 from h2o.utils.compatibility import *  # NOQA
 
 import atexit
@@ -43,10 +42,10 @@ class H2OLocalServer(object):
         hs.ip                           # ip address of the server, typically "127.0.0.1"
         hs.port                         # port on which the server is listening
 
-    Once started, the server will run until the script terminates, or until you call `.shutdown()` on it. Moreover,
+    Once started, the server will run until the script terminates, or until you call ``.shutdown()`` on it. Moreover,
     if the server terminates with an exception, then the server will not stop and will continue to run even after
     Python process exits. This runaway process may end up being in a bad shape (e.g. frozen), then the only way to
-    terminate it is to kill the java process from the terminal.
+    terminate it is to end the Java process from the terminal.
 
     Alternatively, it is possible to start the server as a context manager, in which case it will be automatically
     shut down even if an exception occurs in Python (but not if the Python process is killed)::
@@ -69,10 +68,10 @@ class H2OLocalServer(object):
         Start new H2O server on the local machine.
 
         :param jar_path: Path to the h2o.jar executable. If not given, then we will search for h2o.jar in the
-            locations returned by `._jar_paths()`.
+            locations returned by ``._jar_paths()``.
         :param nthreads: Number of threads in the thread pool. This should be related to the number of CPUs used.
             -1 means use all CPUs on the host. A positive integer specifies the number of CPUs directly.
-        :param enable_assertions: If True, pass `-ea` option to the JVM.
+        :param enable_assertions: If True, pass ``-ea`` option to the JVM.
         :param max_mem_size: Maximum heap size (jvm option Xmx), in bytes.
         :param min_mem_size: Minimum heap size (jvm option Xms), in bytes.
         :param log_dir: Directory for H2O logs to be stored if a new instance is started. Default directory is determined
@@ -81,18 +80,18 @@ class H2OLocalServer(object):
         :param max_log_file_size: Maximum size of INFO and DEBUG log files. The file is rolled over after a specified 
             size has been reached. (The default is 3MB. Minimum is 1MB and maximum is 99999MB)
         :param ice_root: A directory where H2O stores its temporary files. Default location is determined by
-            tempfile.mkdtemp().
+            ``tempfile.mkdtemp()``.
         :param port: Port where to start the new server. This could be either an integer, or a string of the form
             "DDDDD+", indicating that the server should start looking for an open port starting from DDDDD and up.
-        :param name: name of the h2o cluster to be started
+        :param name: name of the h2o cluster to be started.
         :param extra_classpath: List of paths to libraries that should be included on the Java classpath.
         :param verbose: If True, then connection info will be printed to the stdout.
-        :param jvm_custom_args: Custom, user-defined arguments for the JVM H2O is instantiated in
+        :param jvm_custom_args: Custom, user-defined arguments for the JVM H2O is instantiated in.
         :param bind_to_localhost: A flag indicating whether access to the H2O instance should be restricted to the local
             machine (default) or if it can be reached from other computers on the network.
             Only applicable when H2O is started from the Python client.
 
-        :returns: a new H2OLocalServer instance
+        :returns: a new H2OLocalServer instance.
         """
         assert_is_type(jar_path, None, str)
         assert_is_type(port, None, int, str)
@@ -231,7 +230,7 @@ class H2OLocalServer(object):
     def _jar_paths():
         """Produce potential paths for an h2o.jar executable."""
 
-        # PUBDEV-3534 hook to use arbitrary h2o.jar
+        # https://github.com/h2oai/h2o-3/issues/10446 hook to use arbitrary h2o.jar
         own_jar = os.getenv("H2O_JAR_PATH", "")
         if own_jar != "":
             if not os.path.isfile(own_jar):
@@ -292,6 +291,15 @@ class H2OLocalServer(object):
                 assert type(arg) is str
                 cmd += [arg]
 
+        # The Python client already reports this session via its own init event, so
+        # the spawned server skips its redundant cluster_started (dedup, not opt-out).
+        cmd += ["-Dsys.ai.h2o.telemetry.clientLaunched=true"]
+        # Propagate a client-side opt-out (telemetry=False or DO_NOT_TRACK) to the
+        # spawned server so it stays opted out of any server-side telemetry too.
+        from h2o import telemetry as _telemetry
+        if _telemetry._telemetry_disabled():
+            cmd += ["-Dsys.ai.h2o.telemetry.disabled=true"]
+
         # This should be the last JVM option
         if self._extra_classpath is None:
             # Use jar file directly
@@ -332,8 +340,8 @@ class H2OLocalServer(object):
         self._stdout = self._tmp_file("stdout")
         self._stderr = self._tmp_file("stderr")
         cwd = os.path.abspath(os.getcwd())
-        out = open(self._stdout, "w")
-        err = open(self._stderr, "w")
+        out = open(self._stdout, "w", encoding='utf-8')
+        err = open(self._stderr, "w", encoding='utf-8')
         if self._verbose:
             print("  JVM stdout: " + out.name)
             print("  JVM stderr: " + err.name)
@@ -357,7 +365,7 @@ class H2OLocalServer(object):
                 else:
                     error_message = "Server process terminated with error code %d" % proc.returncode 
                 if os.stat(self._stderr).st_size > 0:
-                    error_message += ": %s" % open(self._stderr).read()
+                    error_message += ": %s" % open(self._stderr, encoding='utf-8').read()
                 else:
                     error_message += "."
                 raise H2OServerError(error_message)
@@ -372,6 +380,16 @@ class H2OLocalServer(object):
                 elapsed_time = time.time() - (giveup_time - self._TIME_TO_START)
                 raise H2OServerError("Server wasn't able to start in %f seconds." % elapsed_time)
             time.sleep(0.2)
+
+        security_warning_message = ""
+        if os.stat(self._stdout).st_size > 0:
+            stdout_file = open(self._stdout, encoding='utf-8')
+            for line in stdout_file:
+                if re.search("SECURITY_WARNING", line):
+                    security_warning_message += line + "\n"
+            stdout_file.close()
+        if security_warning_message:
+            warn("\nServer process startup raise a security warning:\n" + str(security_warning_message))
 
     @staticmethod
     def _check_java(java, verbose):
@@ -479,7 +497,7 @@ class H2OLocalServer(object):
         :returns: (scheme, ip, port) tuple if the server has already started, None otherwise.
         """
         searchstr = ": Open H2O Flow in your web browser:"
-        with open(self._stdout, "rt") as f:
+        with open(self._stdout, "rt", encoding='utf-8') as f:
             for line in f:
                 if searchstr in line:
                     url = line[line.index(searchstr) + len(searchstr):].strip().rstrip("/")

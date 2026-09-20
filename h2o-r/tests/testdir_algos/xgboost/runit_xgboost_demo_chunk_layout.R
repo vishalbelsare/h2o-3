@@ -2,7 +2,7 @@ setwd(normalizePath(dirname(R.utils::commandArgs(asValues=TRUE)$"f")))
 source("../../../scripts/h2o-r-test-setup.R")
 
 
-# To demonstrate effect of chunking on AUC: https://0xdata.atlassian.net/browse/PUBDEV-7449 
+# To demonstrate effect of chunking on AUC: https://github.com/h2oai/h2o-3/issues/8189
 demo.xgboost_chunk_layout <- function() {
     orig_df <- h2o.importFile(locate("smalldata/demos/bank-additional-full.csv"))
 
@@ -53,7 +53,7 @@ demo.xgboost_chunk_layout <- function() {
     # - approximated AUC will be identical regardless of the appended columns for 2 frames that have the same chunk layout
     expect_identical(auc_copy, auc_appended)
     # - approximated AUC might (and in this case will) be different for 2 identical frames that have a different chunk layout
-    expect(!identical(auc_orig, auc_copy))
+    expect_true(!identical(auc_orig, auc_copy))
 }
 
 doTest("XGBoost Demo: Show how chunk layout can XGBoost model", demo.xgboost_chunk_layout)

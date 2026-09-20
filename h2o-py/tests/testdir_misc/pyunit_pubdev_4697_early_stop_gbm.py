@@ -1,4 +1,3 @@
-from __future__ import print_function
 import sys
 sys.path.insert(1,"../../")
 import h2o
@@ -17,7 +16,7 @@ NUM_TREES = 5000
 # For decreasing metrics, when the lastInK drop to zero, this implies that no more improvement is possible and
 # the early stopping should return true instead of false.  Good catch and thank you, Craig Milhiser!
 def generate_baseline_data(include_cat):
-    X, y = datasets.make_friedman1(NUM_SAMPLES, 5, 100, 1)
+    X, y = datasets.make_friedman1(n_samples=NUM_SAMPLES, n_features=5, noise=100, random_state=1)
 
     # convert  to a binomial
     prob = 1 / (1 + np.exp(-y))
@@ -64,7 +63,7 @@ def train_it(frames, x):
 
     num_trees_trained = (int(estimator.summary()
                              .as_data_frame()['number_of_trees']
-                             .get_values()[0]))
+                             .to_numpy()[0]))
     print('num trees trained = {0}'.format(num_trees_trained))
     assert num_trees_trained < NUM_TREES, "Early stopping is not work."
 

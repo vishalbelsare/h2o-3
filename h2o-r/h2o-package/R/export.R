@@ -3,6 +3,7 @@
 #`
 #` Export data to local disk or HDFS.
 #` Save models to local disk or HDFS.
+NULL
 
 #' Export an H2O Data Frame (H2OFrame) to a File or to a collection of Files.
 #'
@@ -35,6 +36,11 @@
 #'        Default is to include the header in the output file.
 #' @param quote_header logical, indicates whether column names should be
 #'        quoted. Default is to use quotes.
+#' @param format string, one of "csv" or "parquet". Default is "csv". Export
+#'        to parquet is multipart and H2O itself determines the optimal number
+#'        of files (1 file per chunk).
+#' @param write_checksum logical, if supported by the format (e.g. 'parquet'), 
+#'        export will include a checksum file for each exported data file.
 #'        
 #' @examples
 #'\dontrun{
@@ -49,7 +55,7 @@
 #' }
 #' @export
 h2o.exportFile <- function(data, path, force = FALSE, sep = ",", compression = NULL, parts = 1,
-                           header = TRUE, quote_header = TRUE) {
+                           header = TRUE, quote_header = TRUE, format = "csv", write_checksum = TRUE) {
   if (!is.H2OFrame(data))
     stop("`data` must be an H2OFrame object")
 
@@ -67,8 +73,15 @@ h2o.exportFile <- function(data, path, force = FALSE, sep = ",", compression = N
 
   if(!is.logical(quote_header) || length(quote_header) != 1L || is.na(quote_header))
     stop("`quote_header` must be TRUE or FALSE")
-    
-  params <- list(path=path, num_parts=parts, force=force, separator=.asc(sep), header=header, quote_header=quote_header)
+
+  if(!is.character(format) && !(format == "csv" || format == "parquet"))
+    stop("`format` must be 'csv' or 'parquet'")
+
+  if(!is.logical(write_checksum) || length(write_checksum) != 1L || is.na(write_checksum))
+    stop("`write_checksum` must be TRUE or FALSE")
+
+  params <- list(path=path, num_parts=parts, force=force, separator=.asc(sep), header=header, quote_header=quote_header, 
+                 format=format, write_checksum=write_checksum)
   if (! is.null(compression)) {
     params$compression <- compression
   }
@@ -304,6 +317,7 @@ h2o.saveMojo <- function(object, path="", force=FALSE) {
 #' }
 #' @export
 h2o.save_mojo <- function(object, path="", force=FALSE, filename="") {
+  .h2o.enterprise.block("MOJO export")
   if(!is(object, "H2OModel")) stop("`object` must be an H2OModel object")
   if(!is.character(path) || length(path) != 1L || is.na(path)) stop("`path` must be a character string")
   if(!is.character(filename) || length(filename) != 1L || is.na(filename)) stop("`filename` must be a character string")

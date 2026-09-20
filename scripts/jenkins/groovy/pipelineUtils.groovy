@@ -1,5 +1,7 @@
 import groovy.json.JsonSlurper
 
+import java.lang.reflect.Array
+
 def call() {
     return new PipelineUtils()
 }
@@ -70,7 +72,7 @@ class PipelineUtils {
     }
 
     void pullXGBWheels(final context) {
-        unstashFiles(context, 'xgb-whls')
+//        unstashFiles(context, 'xgb-whls')
     }
 
     void stashScripts(final context) {
@@ -82,7 +84,7 @@ class PipelineUtils {
     }
 
     List<String> readSupportedHadoopDistributions(final context, final String buildinfoPath) {
-        final List<String> DOCKERIZED_DISTRIBUTIONS = ['cdh', 'hdp']
+        final List<String> DOCKERIZED_DISTRIBUTIONS = ['cdh']
 
         final String buildinfoContent = context.sh(script: "sed 's/SUBST_BUILD_TIME_MILLIS/\"SUBST_BUILD_TIME_MILLIS\"/g' ${buildinfoPath} | sed -e 's/SUBST_BUILD_NUMBER/\"SUBST_BUILD_NUMBER\"/g'", returnStdout: true).trim()
 
@@ -125,15 +127,6 @@ class PipelineUtils {
         return gradleVersion
     }
 
-    boolean dockerImageExistsInRegistry(final context, final String registry, final String imageName, final String version) {
-        context.withCredentials([context.usernamePassword(credentialsId: "${registry}", usernameVariable: 'REGISTRY_USERNAME', passwordVariable: 'REGISTRY_PASSWORD')]) {
-            context.echo "URL: http://${registry}/api/repositories/${imageName}/tags"
-            final String response = "curl -k -u ${context.REGISTRY_USERNAME}:${context.REGISTRY_PASSWORD} http://${registry}/api/repositories/${imageName}/tags".execute().text
-            final def jsonResponse = new groovy.json.JsonSlurper().parseText(response)
-            def matched = jsonResponse.findAll { it.name == version }
-            return matched.size() > 0
-        }
-    }
 
     /**
      *

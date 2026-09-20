@@ -3,6 +3,10 @@
 Using Flow - H2O's Web UI
 =========================
 
+.. warning::
+
+   H2O Flow is deprecated and will be removed in a future release. Use the Python or R client instead. See `H2O-3 clients <h2o-client.html>`__.
+
 About
 ------
 
@@ -25,7 +29,10 @@ Download Flow
   .. substitution-code-block:: bash
 
     curl -o h2o.zip http://download.h2o.ai/versions/h2o-|version|.zip
-        
+
+.. note::
+   
+   By default, this setup is open. Follow `security guidelines <security.html>`__ if you want to secure your installation.        
 
 2. Next in your terminal, enter the following command lines one at a time. The first line changes into your Downloads folder, the second line unzips your zipfile, the third line changes into your h2o-3-|version| folder, and the fourth line runs your jar file.
 
@@ -1103,6 +1110,10 @@ Click on a model name to view details about the model. The information that disp
 
 The following additional functions are available when viewing a model:
 
+.. note::
+
+   **Download POJO** and **Download Model Deployment Package (MOJO)** require H2O-3 Secure, the commercially supported tier of H2O-3. H2O-3 OSS blocks both at the server, so Flow returns an error. See `Productionizing H2O <productionizing.html>`__.
+
 - **Refresh**: Refreshes the model.
 - **Predict**: Use this model to make predictions.  
 - **Download POJO**: Generates a Plain Old Java Object (POJO) that can use the model outside of H2O. Note that a POJO can be run in standalone mode or it can be integrated into a platform, such as `Hadoop's Storm <https://github.com/h2oai/h2o-tutorials/tree/master/tutorials/streaming/storm>`__. To make the POJO work in your Java application, you will also need the ``h2o-genmodel.jar`` file (available via the **Download Generated Model** button, from the **Admin** menu, or in ``h2o-3/h2o-genmodel/build/libs/h2o-genmodel.jar``). Note that POJOs are are not supported for XGBoost models.
@@ -1696,12 +1707,13 @@ To obtain the most recent information, click the **Refresh** button.
 Reporting Issues
 ^^^^^^^^^^^^^^^^
 
-If you experience an error with Flow, you can submit a JIRA ticket to notify our team.
+If you experience an error with Flow, you can submit a GitHub issue to notify our team.
 
 1. First, click the **Admin** menu, then click **Download Logs**. This will download a file contains information that will help our developers identify the cause of the issue.
-2. Click the **Help** menu, then click **Report an issue**. This will open our JIRA page where you can file your ticket.
-3. Click the **Create** button at the top of the JIRA page.
-4. Attach the log file from the first step, write a description of the error you experienced, then click the **Create** button at the bottom of the page. Our team will work to resolve the issue and you can track the progress of your ticket in JIRA.
+2. Click the **Help** menu, then click **Report an issue**. This will open the GitHub issue page where you can file your ticket.
+3. Click the **New issue** button at the top of the page.
+4. On the next page click **Get started** button for the **Bug Report** item.
+5. Attach the log file from the first step, write a description of the error you experienced, then click the **Submit new issue** button at the bottom of the page.
 
 --------------
 

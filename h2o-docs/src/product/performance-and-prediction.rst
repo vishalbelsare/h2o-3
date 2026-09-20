@@ -1163,6 +1163,87 @@ Using the previously imported and split airlines dataset, run the following to r
     ks
     0.20072346203696562
 
+Computing Model Metrics from General Predictions
+''''''''''''''''''''''''''''''''''''''''''''''''
+
+The ``make_metrics`` function computes a model metrics object from given predicted values (target for regression; class-1 probabilities, binomial, or per-class probabilities for classification).
+
++------------------+---------------------------------------------------------------------------------------------------------------+
+| Parameters       | Parameter Descriptions                                                                                        |
++==================+===============================================================================================================+
+| **predicted**    | An H2OFrame containing predictions.                                                                           |
++------------------+---------------------------------------------------------------------------------------------------------------+
+| **actuals**      | An H2OFrame containing actual values.                                                                         |
++------------------+---------------------------------------------------------------------------------------------------------------+
+| **domain**       | A list of response factors for classification.                                                                |
++------------------+---------------------------------------------------------------------------------------------------------------+
+| **distribution** | A distribution for regression.                                                                                |
++------------------+---------------------------------------------------------------------------------------------------------------+
+| **weights**      | An H2OFrame containing observation weights.                                                                   |
++------------------+---------------------------------------------------------------------------------------------------------------+
+| **treatment**    | (Uplift binomial classification only) an H2OFrame containing treatment information.                           |
++------------------+---------------------------------------------------------------------------------------------------------------+
+| **auc_type**     | (Multinomial classification only) the type of aggregated AUC/AUCPR to be used to calculate this metric.       |
+|                  | One of: ``MACRO_OVO``, ``MACRO_OVR``, ``WEIGHTED_OVO``, ``WEIGHTED_OVR``, ``AUTO``, ``NONE`` (default).       |
++------------------+---------------------------------------------------------------------------------------------------------------+
+| **auuc_type**    | (Uplift binomial classification only) the type of AUUC to be used to calculate this metric.                   |
+|                  | One of: ``gini``, ``lift``, ``gain``, ``AUTO`` (default).                                                     |
++------------------+---------------------------------------------------------------------------------------------------------------+
+| **auuc_nbins**   | (Uplift binomial classification only) the number of bins to be used to calculate AUUC. Defaults to -1 (1000). |
++------------------+---------------------------------------------------------------------------------------------------------------+
+
+.. tabs::
+   .. code-tab:: r R
+
+      library(h2o)
+      h2o.init()
+
+      # import the prostate dataset:
+      prostate = h2o.importFile("https://s3.amazonaws.com/h2o-public-test-data/smalldata/prostate/prostate.csv")
+
+      # set the predictors and response:
+      prostate$CAPSULE <- as.factor(prostate$CAPSULE)
+      y <- "CAPSULE"
+      x <- c("AGE", "RACE", "DPROS", "DCAPS", "PSA", "VOL", "GLEASON")
+
+      # build and train the model:
+      prostate_gbm <- h2o.gbm(x = x, y = y, training_frame = prostate)
+
+      # set the 'predictors' and 'actuals':
+      pred <- h2o.predict(prostate_gbm, prostate)[, 3]
+      actual <- prostate$CAPSULE
+
+      # retrieve the model metrics:
+      metrics <- h2o.make_metrics(pred, actual)
+      h2o.auc(metrics)
+
+   .. code-tab:: python
+
+      import h2o
+      from h2o.estimators import H2OUpliftRandomForestEstimator
+      h2o.init()
+
+      # import the prostate dataset:
+      prostate = h2o.import_file("http://s3.amazonaws.com/h2o-public-test-data/smalldata/prostate/prostate.csv")
+
+      # set the predictors and response:
+      x = ["AGE","RACE","DPROS","DCAPS","PSA","VOL","GLEASON"]
+      y = "CAPSULE"
+      prostate["CAPSULE"] = prostate["CAPSULE"].asfactor()
+
+      # build and train the model:
+      prostate_gbm = H2OGradientBoostingEstimator()
+      prostate_gbm.train(x=x, y=y, training_frame=prostate)
+
+      # set the 'predicted' and 'actuals':
+      actual = prostate["CAPSULE"]
+      pred = prostate_gbm.predict(prostate)[2]
+
+      # retrieve the model metrics:
+      metrics = h2o.make_metrics(pred, actual)
+      metrics.auc()
+
+
 Metric Best Practices - Regression
 '''''''''''''''''''''''''''''''''''
 
@@ -1488,12 +1569,13 @@ Examples:
         #split the data into training and validation sets:
         cars_splits <- h2o.splitFrame(data = cars, ratio = 0.8, seed = 1234)
         train <- cars_splits[[1]]
-        valid <- cars_splits[[2]
+        valid <- cars_splits[[2]]
 
         # build and train the model using the deviance stopping metric:
-        cars_gbm <- h2o.gbm(x = predictors, y = repsonse, 
+        cars_gbm <- h2o.gbm(x = predictors, y = response, 
                             training_frame = train, validation_frame = valid, 
                             stopping_metric = "deviance", stopping_rounds = 3, 
+                            score_tree_interval = 5,
                             stopping_tolerance = 1e-2, seed = 1234)
 
         # retrieve the mse value:
@@ -1517,6 +1599,7 @@ Examples:
         cars_gbm = H2OGradientBoostingEstimator(stopping_metric = "deviance", 
                                                 stopping_rounds = 3, 
                                                 stopping_tolerance = 1e-2, 
+                                                score_tree_interval = 5,
                                                 seed = 1234)
         cars_gbm.train(x = predictors, y = response, 
                        training_frame = train, validation_frame = valid)
@@ -1534,51 +1617,56 @@ Examples:
 .. tabs::
    .. code-tab:: r R
 
-        # import the cars dataset:
-        cars <- h2o.importFile("https://s3.amazonaws.com/h2o-public-test-data/smalldata/junit/cars_20mpg.csv")
-
+        # import the prostate dataset:
+        prostate <- h2o.importFile("https://s3.amazonaws.com/h2o-public-test-data/smalldata/prostate/prostate.csv")
+        
         # set the predictors and response columns:
-        predictors <- c("economy", "cylinders", "displacement", "power", "weight")
-        response = "acceleration"
-
+        prostate$CAPSULE <- as.factor(prostate$CAPSULE)
+        predictors <- c("AGE", "RACE", "DPROS", "DCAPS", "PSA", "VOL", "GLEASON")
+        response <- "CAPSULE"
+        
         #split the data into training and validation sets:
-        cars_splits <- h2o.splitFrame(data = cars, ratio = 0.8, seed = 1234)
-        train <- cars_splits[[1]]
-        valid <- cars_splits[[2]
-
+        prostate_splits <- h2o.splitFrame(data = prostate, ratio = 0.8, seed = 1234)
+        
+        train <- prostate_splits[[1]]
+        valid <- prostate_splits[[2]]
+                             
         # build and train the model using the mean_per_class_error stopping metric:
-        cars_gbm <- h2o.gbm(x = predictors, y = repsonse, 
-                            training_frame = train, validation_frame = test, 
-                            stopping_metric = "mean_per_class_error", stopping_rounds = 3, 
-                            stopping_tolerance = 1e-2, seed = 1234)
-
+        prostate_gbm <- h2o.gbm(x = predictors, y = response,
+                           training_frame = train, validation_frame = valid,
+                           stopping_metric = "mean_per_class_error", stopping_rounds = 3,
+                           score_tree_interval = 5,
+                           stopping_tolerance = 1e-2, seed = 1234)
+        
         # retrieve the mse value:
-        h2o.mse(cars_gbm, valid = TRUE)
+        h2o.mse(prostate_gbm, valid = TRUE)
 
 
    .. code-tab:: python
 
-        # import H2OGradientBoostingEstimator and the cars dataset:
+        # import H2OGradientBoostingEstimator and the prostate dataset:
         from h2o.estimators import H2OGradientBoostingEstimator
-        cars = h2o.import_file("https://s3.amazonaws.com/h2o-public-test-data/smalldata/junit/cars_20mpg.csv")
+        prostate = h2o.import_file("https://s3.amazonaws.com/h2o-public-test-data/smalldata/prostate/prostate.csv")
 
         # set the predictors and response columns:
-        predictors = ["economy","cylinders","displacement","power","weight"]
-        response = "acceleration"
+        prostate["CAPSULE"] = prostate["CAPSULE"].asfactor()
+        predictors = ["AGE", "RACE", "DPROS", "DCAPS", "PSA", "VOL", "GLEASON"]
+        response = "CAPSULE"
 
         # split the data into training and validation sets:
-        train, valid = cars.split_frame(ratios=[.8],seed=1234)
+        train, valid = prostate.split_frame(ratios=[.8],seed=1234)
 
         # build and train the model using the meanperclasserror stopping metric:
-        cars_gbm = H2OGradientBoostingEstimator(stopping_metric = "meanperclasserror", 
+        prostate_gbm = H2OGradientBoostingEstimator(stopping_metric = "meanperclasserror", 
                                                 stopping_rounds = 3, 
                                                 stopping_tolerance = 1e-2, 
+                                                score_tree_interval = 5,
                                                 seed = 1234)
-        cars_gbm.train(x=predictors, y=repsonse, 
+        prostate_gbm.train(x=predictors, y=response, 
                        training_frame=train, validation_frame=valid)
 
         # retrieve the mse value:
-        cars_gbm.mse(valid = True)
+        prostate_gbm.mse(valid = True)
 
 In addition to the above options, Logloss, MSE, RMSE, MAE, RMSLE, and AUC can also be used as the stopping metric. 
 
@@ -1652,6 +1740,10 @@ Examples:
 
         # build the confusion matrix:
         gbm.confusion_matrix(train)
+
+.. note::
+    
+    Because we use an online version of the algorithm to calculate the histogram of the predictors for the confusion matrix, the confusion matrix returns an approximation of the actual histogram and, therefore, will not match the exact values.
 
 Variable Importances
 ''''''''''''''''''''
@@ -2039,15 +2131,7 @@ Example:
                          gainslift_bins = 20)
 
         # Plot the Gains/Lift chart:
-        gain_table <- model@model$training_metrics@metrics$gains_lift_table
-        plot(gain_table$cumulative_data_fraction,
-             gain_table$cumulative_capture_rate,'l', 
-             ylim = c(0,1.5), col = "dodgerblue3",
-             xlab = "cumulative data fraction",
-             ylab = "cumulative capture rate, cumulative lift",
-             main = "Gains/Lift")
-        lines(gain_table$cumulative_data_fraction,
-              gain_table$cumulative_lift, col = "orange")
+        h2o.gains_lift_plot(model)
 
     .. code-tab:: python
 
@@ -2065,24 +2149,7 @@ Example:
                     training_frame=airlines)
 
         # Plot the Gains/Lift chart:
-        gl = model.gains_lift()
-        X = gl['cumulative_data_fraction']
-        Y = gl['cumulative_capture_rate']
-        YC = gl['cumulative_lift']
-
-        plt = get_matplotlib_pyplot(server=False, raise_if_not_available=True)
-        plt.figure(figsize=(10,10))
-        plt.grid(True)
-        plt.plot(X, Y, zorder=10, label='cumulative capture rate')
-        plt.plot(X, YC, zorder=10, label='cumulative lift')
-        plt.legend(loc=4, fancybox=True, framealpha=0.5)
-        plt.xlim(0, 1)
-        plt.ylim(0, 1.5)
-        plt.xlabel('cumulative data fraction')
-        plt.ylabel('cumulative capture rate, cumulative lift')
-        plt.title('Gains/Lift')
-        fig = plt.gcf()
-        plt.show()
+        model.gains_lift_plot()
 
 .. figure:: images/gainslift_plot.png
     :alt: Gains/Lift Plot
@@ -2329,6 +2396,115 @@ Multinomial Examples
   :alt: Multinomial Partial Dependence Plot
   :scale: 30%
 
+Leaderboard
+~~~~~~~~~~~
+Leaderboard is used for comparing multiple models. The models are ranked by a default metric based on the problem type (the second column of the leaderboard).
+In binary classification problems, that metric is AUC, and in multiclass classification problems, the metric is mean per-class error.
+In regression problems, the default sort metric is RMSE. Some additional metrics are also provided, for convenience.
+A different sort metric can be used by specifying the ``sort_metric`` argument.
+
+Leaderboard uses metrics calculated on the ``leaderboard_frame``.
+If you don't specify the ``leaderboard_frame``, you can use the ``scoring_data`` argument to specify what metrics should be used.
+The default value is ``AUTO`` which means that the leaderboard will try to use metrics from cross-validation and
+if not available then validation and if validation metrics aren't available it will use the training metrics.
+This is applied on per-model basis which can cause leaderboard to compare apples and oranges.
+You can specify one of ``xval``, ``valid``, or ``train`` to be certain that the comparison is using the same metrics.
+
+To help users assess the complexity of the models, the ``h2o.make_leaderboard`` function has an ``extra_columns`` parameter.
+This parameter allows you to specify which (if any) optional columns should be added to the leaderboard.
+This defaults to None.
+
+Allowed options include:
+
+ - ``training_time_ms``: A column providing the training time of each model in milliseconds. (Note that this doesn’t include the training of cross validation models.)
+ - ``predict_time_per_row_ms``: A column providing the average prediction time by the model for a single row.
+ - ``ALL``: Adds columns for both ``training_time_ms`` and ``predict_time_per_row_ms``.
+
+.. tabs::
+   .. code-tab:: r R
+
+    library(h2o)
+
+    h2o.init()
+
+    # Import a sample binary outcome dataset into H2O
+    data <- h2o.importFile("https://s3.amazonaws.com/h2o-public-test-data/smalldata/higgs/higgs_train_10k.csv")
+    test <- h2o.importFile("https://s3.amazonaws.com/h2o-public-test-data/smalldata/higgs/higgs_test_5k.csv")
+
+    # Identify predictors and response
+    y <- "response"
+    x <- setdiff(names(data), y)
+
+    # For binary classification, response should be a factor
+    data[, y] <- as.factor(data[, y])
+    test[, y] <- as.factor(test[, y])
+
+    # Split data into train & validation
+    ss <- h2o.splitFrame(data, seed = 1)
+    train <- ss[[1]]
+    valid <- ss[[2]]
+
+    # GBM hyperparameters
+    gbm_params1 <- list(learn_rate = c(0.01, 0.1),
+                        max_depth = c(3, 5, 9),
+                        sample_rate = c(0.8, 1.0),
+                        col_sample_rate = c(0.2, 0.5, 1.0))
+
+    # Train and validate a cartesian grid of GBMs
+    gbm_grid1 <- h2o.grid("gbm", x = x, y = y,
+                          grid_id = "gbm_grid1",
+                          training_frame = train,
+                          validation_frame = valid,
+                          ntrees = 100,
+                          seed = 1,
+                          hyper_params = gbm_params1)
+
+    h2o.make_leaderboard(gbm_grid1, test)
+
+   .. code-tab:: python
+
+    import h2o
+    from h2o.estimators.gbm import H2OGradientBoostingEstimator
+    from h2o.grid.grid_search import H2OGridSearch
+
+    h2o.init()
+
+    # Import a sample binary outcome dataset into H2O
+    data = h2o.import_file("https://s3.amazonaws.com/h2o-public-test-data/smalldata/higgs/higgs_train_10k.csv")
+    test = h2o.import_file("https://s3.amazonaws.com/h2o-public-test-data/smalldata/higgs/higgs_test_5k.csv")
+
+    # Identify predictors and response
+    x = data.columns
+    y = "response"
+    x.remove(y)
+
+    # For binary classification, response should be a factor
+    data[y] = data[y].asfactor()
+    test[y] = test[y].asfactor()
+
+    # Split data into train & validation
+    ss = data.split_frame(seed = 1)
+    train = ss[0]
+    valid = ss[1]
+
+    # GBM hyperparameters
+    gbm_params1 = {'learn_rate': [0.01, 0.1],
+                    'max_depth': [3, 5, 9],
+                    'sample_rate': [0.8, 1.0],
+                    'col_sample_rate': [0.2, 0.5, 1.0]}
+
+    # Train and validate a cartesian grid of GBMs
+    gbm_grid1 = H2OGridSearch(model=H2OGradientBoostingEstimator,
+                              grid_id='gbm_grid1',
+                              hyper_params=gbm_params1)
+    gbm_grid1.train(x=x, y=y,
+                    training_frame=train,
+                    validation_frame=valid,
+                    ntrees=100,
+                    seed=1)
+
+    h2o.make_leaderboard(gbm_grid1, test)
+
 
 Prediction
 ----------
@@ -2483,9 +2659,15 @@ Using the previous example, run the following to predict the leaf node assignmen
 Predict Contributions
 ~~~~~~~~~~~~~~~~~~~~~
 
-In H2O-3, each returned H2OFrame has a specific shape (#rows, #features + 1). This includes a feature contribution column for each input feature, with the last column being the model bias (same value for each row). The sum of the feature contributions and the bias term is equal to the raw prediction of the model. Raw prediction of tree-based model is the sum of the predictions of the individual trees before the inverse link function is applied to get the actual prediction. For Gaussian distribution, the sum of the contributions is equal to the model prediction. 
 
-H2O-3 supports TreeSHAP for DRF, GBM, and XGBoost. For these problems, the ``predict_contributions`` returns a new H2OFrame with the predicted feature contributions - SHAP (SHapley Additive exPlanation) values on an H2O model. If you have SHAP installed, then graphical representations can be retrieved in Python using `SHAP functions <https://shap.readthedocs.io/en/latest/#>`__. (Note that retrieving graphs via R is not yet supported.) An .ipynb demo showing this example is also available `here <https://github.com/h2oai/h2o-3/tree/master/h2o-py/demos/predict_contributionsShap.ipynb>`__.
+Path Dependent TreeSHAP
+'''''''''''''''''''''''
+In H2O-3, each returned H2OFrame has the specific shape of *#rows, #features + 1*. This includes a feature contribution column for each input feature. The last column of this table is the model bias (the column is the same for each row). The sum of the feature contributions and the bias term is equal to the raw prediction of the model. Raw prediction of a tree-based model is the sum of the predictions of the individual trees prior to applying the inverse link function to retrieve the actual prediction. For Gaussian distribution, the sum of the contributions is equal to the model prediction.
+
+We support TreeSHAP for DRF, GBM, and XGBoost. For these problems, ``predict_contributions`` returns a new H2OFrame with the predicted feature contributions as SHAP (SHapley Additive exPlanation) values on an H2O model.
+
+You can use methods from `model explainability <explain.html#shap-summary>`__ to plot SHAP. If you have SHAP installed, graphical representations can be retrieved in Python using `SHAP functions <https://shap.readthedocs.io/en/latest/#>`__.
+Retrieving graphs via R is not yet supported. An `.ipynb demo showing this example <https://github.com/h2oai/h2o-3/tree/master/h2o-py/demos/predict_contributionsShap.ipynb>`__ is also available.
 
 **Note**: Multinomial classification models are currently not supported.
 
@@ -2493,7 +2675,7 @@ H2O-3 supports TreeSHAP for DRF, GBM, and XGBoost. For these problems, the ``pre
 .. tabs::
    .. code-tab:: r R
   
-        # Predict the contributions using the GBM model and test data.
+        # Predict the contributions using the GBM model and test data:
         contributions <- h2o.predict_contributions(model, prostate_test)
         contributions
 
@@ -2505,12 +2687,18 @@ H2O-3 supports TreeSHAP for DRF, GBM, and XGBoost. For these problems, the ``pre
         5 -0.02015455  0.06589284 -1.5968542 -0.9778085 -0.2434755
         6 -0.33494386 -0.58143651 -0.4093136  0.5271149 -0.2434755
 
-        [90 rows x 5 columns] 
+        [90 rows x 5 columns]
+
+        # Plot SHAP summary plot:
+        h2o.shap_summary_plot(model, prostate_test)
+
+        # Plot SHAP contributions for one instance (e.g., row 5):
+        h2o.shap_explain_row_plot(model, prostate_test, row_index = 5)
 
 
    .. code-tab:: python
 
-        # Predict the contributions using the GBM model and test data.
+        # Predict the contributions using the GBM model and test data:
         contributions = model.predict_contributions(test)
         contributions
 
@@ -2529,30 +2717,242 @@ H2O-3 supports TreeSHAP for DRF, GBM, and XGBoost. For these problems, the ``pre
 
         [90 rows x 5 columns]
 
+        # Plot SHAP summary plot:
+        model.shap_summary_plot(test)
+
+        # Plot SHAP contributions for one instance (e.g., row 5):
+        model.shap_explain_row_plot(test, row_index=5)
+
+        # OR using the shap package:
         # Import required packages for running SHAP commands
         import shap
 
-        # Load JS visualization code
+        # Load JS visualization code:
         shap.initjs()
 
-        # Convert the H2OFrame to use with SHAP's visualization functions
-        contributions_matrix = contributions.as_data_frame().as_matrix()
+        # Convert the H2OFrame to use with SHAP's visualization functions:
+        contributions_matrix = contributions.as_data_frame().values
 
-        # Calculate SHAP values for all features
+        # Calculate SHAP values for all features:
         shap_values = contributions_matrix[:,0:4]
 
-        # Expected values is the last returned column
+        # Expected values is the last returned column:
         expected_value = contributions_matrix[:,4].min()
 
-        # Visualize the training set predictions
+        # Visualize the training set predictions:
         X=["AGE","RACE","PSA","GLEASON"]
         shap.force_plot(expected_value, shap_values, X)
 
-        # Summarize the effects of all the features
+        # Summarize the effects of all the features:
         shap.summary_plot(shap_values, X)
 
-        # View the same summary as a bar chart
+        # View the same summary as a bar chart:
         shap.summary_plot(shap_values, X, plot_type="bar")
+
+
+Interventional / Marginal SHAP
+''''''''''''''''''''''''''''''
+
+**Supported Algos:** DeepLearning [:ref:`1<ref9>`, :ref:`2<ref10>`], DRF [:ref:`3<ref11>`], GBM [:ref:`3<ref11>`], GLM, StackedEnsemble [:ref:`2<ref10>`], XGBoost [:ref:`3<ref11>`]
+
+**NOTE:** DeepLearning and StackedEnsemble support only approximate SHAP values using DeepSHAP [:ref:`1<ref9>`, :ref:`2<ref10>`] with multiple baselines, and G-DeepSHAP [:ref:`2<ref10>`] respectively. 
+
+This method of SHAP calculation requires a background dataset and is now often called marginal SHAP to avoid confusion with causal approaches to calculate Shapley values (this method assumes a flat causal graph) [:ref:`4<ref12>`]. Marginal SHAP is calculated as an average baseline SHAP using each row from the background dataset as a baseline.
+
+Ideally, this should be the preferred SHAP to use because the Path Dependent TreeSHAP has some issues. Most importantly, it can provide non-zero attribution for an unused feature (the Dummy/Missingness property) [:ref:`5<ref13>`]. This should not happen in the baseline and marginal SHAP.
+
+.. note::
+
+    **Caveat:** When using ``predict_contributions`` with a dataset with categorical columns, you can specify the parameter ``output_format="original"``. This will return contributions for one-hot encoded columns, but those contributions are not necessarily SHAP values because categorical variables can have just one level in one row. In other words, the columns created by one-hot encoding a categorical variable are not independent. 
+
+    For example, a column, ``Col``, has levels ``a``, ``b``, and ``c``. To get the SHAP, it would have to be possible to get a row that would have ``Col`` equal to:  
+
+    - {``a``},
+    - {``b``},
+    - {``c``},
+    - {``a``, ``b``},
+    - {``a``, ``c``},
+    - {``b``, ``c``}, and
+    - {``a``, ``b``, ``c``}.
+
+    The sum of all one-hot encoded columns for a given feature results in the SHAP value for that feature.
+
+**Baseline SHAP**
+
+In the baseline SHAP, the contribution for feature :math:`i (\phi_i`) can be imagined to be calculated by taking the powerset :math:`Q` of all features that differ between the explained point and the baseline except the feature :math:`i` and for each subset from that powerset. This creates artificial data points where features from the subset take the value from the reference point and the rest of the features take the value from the baseline point. They then take a difference of the model evaluation on this point with feature :math:`i` value from :math:`x^{(e)}` and :math:`x^{(b)}`.
+
+Let: 
+
+- :math:`x^{(e)}` be the point for which we are calculating the contributions, 
+- :math:`x^{(b)}` be the baseline point,
+- :math:`h(x)` be the predictive function (the model),
+- :math:`Q` be the powerset of indices of features that differ between :math:`x^{(e)}` and :math:`x^{(b)}`,
+- :math:`d` be the number of features that differ between :math:`x^{(e)}` and :math:`x^{(b)}`, and 
+- :math:`r_i(x^{(e)}, x^{(b)}, S) = \begin{cases} x^{(e)}_i \quad \text{if}\ i \in S\\ x^{(b)}_i \quad \text{otherwise}\end{cases}`.
+
+.. math::
+    \phi_i(h, x^{(e)}, x^{(b)}) = \sum_{S \in Q} \frac{|S|! (d-|S| - 1)!}{d!} (h(r(x^{(e)}, x^{(b)}, S \cup \{i\}))-h(r(x^{(e)}, x^{(b)}, S)))
+
+The sum of contributions equals to the difference between a reference point and a baseline.
+
+.. math::
+     h(x^{(e)}) - h(x^{(b)}) = \sum_{i \in \text{feature}} \phi_i(h, x^{(e)}, x^{(b)}))
+
+In the path dependent TreeSHAP, there is another column called `BiasTerm` that is added to the sum of the contributions to get the 
+prediction :math:`h(x) = \text{BiasTerm} + \sum_{i=1}^d \phi_i`, in the baseline SHAP. This `BiasTerm` is equal to :math:`h(x^{(b)})`.
+
+As the baseline SHAP can be memory intensive, the computation is optimized in order to parallelize over the bigger frame in order to decrease the communication cost.
+
+To get the baseline SHAP, specify ``output_per_reference=True`` in the ``predict_contributions`` method.
+The result from the ``predict_contributions`` method is enriched with ``RowIdx`` and ``BackgroundRowIdx`` columns so the contributions can be easily mapped to
+the explained frame and the background frame.
+
+.. note::
+    
+    Using baseline SHAP produces a frame with the number of rows equal to the number of rows of the explained frame times the number of rows of the background frame.
+
+.. tabs::
+   .. code-tab:: r R
+  
+          # Compute Baseline SHAP; this enables looking at the contributions against 
+          # different baselines (e.g., older males in this case)
+          h2o.predict_contributions(model, 
+                                    prostate_test, 
+                                    background_frame=prostate_train[prostate_train$AGE > 70, ], 
+                                    output_per_reference = TRUE)
+
+                 RACE      DPROS      DCAPS        PSA        VOL      GLEASON BiasTerm RowIdx BackgroundRowIdx
+          1 0.0000000  0.6040196  0.1489700 0.08277533  0.0000000 -0.007383927 67.90027      0                0
+          2 0.3102472  0.0000000  0.0000000 1.10074197 -0.4141512 -0.086468272 67.81828      0                1
+          3 0.0000000  0.6251030  0.1074789 0.02255024  0.0000000 -0.052744012 68.02626      0                2
+          4 0.0000000  0.0000000 -0.1381250 0.42088614  0.0000000 -0.090785108 68.53667      0                3
+          5 0.0000000  1.3762679 -0.1959183 0.34541795  0.0000000 -0.343634803 67.54651      0                4
+          6 0.0000000 -0.4059084  0.0000000 0.18515649  0.0000000 -0.021399001 68.97080      0                5
+
+          [37620 rows x 9 columns] 
+          
+
+   .. code-tab:: python
+
+          # Compute Baseline SHAP; this enables looking at the contributions against 
+          # different baselines (e.g., older males in this case)
+          model.predict_contributions(prostate_test, 
+                                      background_frame=prostate_train[prostate_train["AGE"] > 70, :], 
+                                      output_per_reference = True)
+
+                 AGE       RACE        DPROS      DCAPS         PSA         VOL     GLEASON    BiasTerm    RowIdx    BackgroundRowIdx
+          ----------  ---------  -----------  ---------  ----------  ----------  ----------  ----------  --------  ------------------
+           0          0           0           0          -0.0406704   0          -0.0159229   0.624277          0                   0
+          -0.0265084  0.115568    0.0921354   0.0521548  -0.132599    0.0959191   0.115393    0.255621          0                   1
+           0          0          -0.00649863  0          -0.302238    0           0.0977098   0.77871           0                   2
+           0          0          -0.216909    0          -0.244149    0          -0.0233896   1.05213           0                   3
+           0.0294289  0          -0.0168443   0.0320507   0.0251351   0           0.52408    -0.0261672         0                   4
+          -0.0017294  0.0546553   0.122834    0.0234999   0.0147228   0           0.469046   -0.115345          0                   5
+          -0.0209216  0           0           0.0562942  -0.0875752  -0.184241   -0.0225276   0.826654          0                   6
+          -0.0285146  0           0.364188    0.0636343  -0.0719393  -0.0384352   0.0726108   0.20614           0                   7
+          -0.0673656  0           0.184373    0.0412827  -0.325982   -0.0931228   0.132599    0.695899          0                   8
+           0.0108649  0           0.225565    0.0221987  -0.112281    0           0.44203    -0.020694          0                   9
+
+          [37620 rows x 9 columns] 
+
+**Marginal SHAP**
+
+In the marginal SHAP, the contribution is calculated as 
+
+.. math::
+    \phi_i(h, x^{(e)}) = \frac{1}{|D|} \sum_{x^{(b)} \in D} \phi(h, x^{(e)}, x^{(b)}) 
+
+where :math:`D` is the background dataset.
+
+Using the marginal SHAP enables you to look for contributions against different baselines (for example, different subpopulations).
+
+As the marginal SHAP can be memory intensive, the computation is optimized in order to parallelize over the background set since it needs to compute an average over baseline SHAPs where every single point from the background set is used as a reference. There is one exception: when there is plenty of free memory, it will parallelize over the bigger frame.
+
+.. tabs::
+   .. code-tab:: r R
+  
+          # Compute Marginal SHAP, this enables looking at the contributions against
+          # different baselines (e.g., older males in this case)
+          h2o.predict_contributions(model, 
+                                    prostate_test, 
+                                    background_frame=prostate_train[prostate_train$AGE > 70, ])
+
+                   RACE      DPROS       DCAPS         PSA         VOL      GLEASON BiasTerm
+          1  0.01221071  0.1442253 -0.02368839  0.28334598 -0.27244853 -0.050375786 68.63538
+          2  0.01554721 -0.4885786  0.06818504  0.07093928 -0.40644674  0.005242058 68.63538
+          3  0.01619808  0.6368542  0.10928919  0.12617361 -0.43928950 -0.176276680 68.63538
+          4 -0.37412145  0.1527038 -0.02231085 -0.62897581  0.02538746  0.030216405 68.63538
+          5  0.02351126  0.6573612 -0.06684027 -0.01427528  0.66239009 -0.141467870 68.63538
+          6  0.01748617 -0.5110773  0.06850011  0.08616166 -0.37861648  0.108426911 68.63538
+          
+          [380 rows x 7 columns]
+
+
+          # Plot SHAP summary plot:
+          h2o.shap_summary_plot(model, 
+                                prostate_test, 
+                                background_frame=prostate_train[prostate_train$AGE > 70, ])
+
+          # Plot SHAP contributions for one instance (e.g., row 5):
+          h2o.shap_explain_row_plot(model, 
+                                    prostate_test, 
+                                    row_index = 5, 
+                                    background_frame=prostate_train[prostate_train$AGE > 70, ])
+
+
+   .. code-tab:: python
+
+          # Compute Marginal SHAP, this enables looking at the contributions against
+          # different baselines (e.g., older males in this case)
+          model.predict_contributions(prostate_test, 
+                                      background_frame=prostate_train[prostate_train["AGE"] > 70, :])
+
+                   AGE         RACE       DPROS        DCAPS          PSA          VOL     GLEASON    BiasTerm
+          ------------  -----------  ----------  -----------  -----------  -----------  ----------  ----------
+          -0.00390396    0.00461162   0.0812151   0.0354627   -0.0880568    0.00987528   0.16727      0.361209
+           0.12961      -0.0974719    0.238144    0.0301782    0.0750851    0.0786154    0.0820873    0.361209
+           0.000218997   0.00607607  -0.165538   -0.00164295   0.110438    -0.00369223  -0.162637     0.361209
+          -0.0211114     0.00352612   0.0746521  -0.00214469  -0.166035    -0.15557     -0.199869     0.361209
+          -0.0165421     0.00456433  -0.0524966  -0.00352489  -0.087945    -0.00809267   0.0317739    0.361209
+           0.00363843    0.00609676   0.230796   -0.00115063  -0.0965648    0.0831312    0.144009     0.361209
+          -0.00072942    0.00471497  -0.127639    0.030633     0.145419     0.0442545    0.310656     0.361209
+           0.0762746     0.0039464   -0.0143102  -0.00549353   0.0590267   -0.0355882    0.0992434    0.361209
+          -0.023101      0.0024461    0.225077   -0.0036679   -0.00969025   0.0832767    0.161513     0.361209
+           0.0215677     0.00496158   0.100158    0.0296085    0.120057    -0.173633     0.217662     0.361209
+          
+          [380 rows x 7 columns]
+
+          # Plot SHAP summary plot:
+          model.shap_summary_plot(prostate_test, 
+                                  background_frame=prostate_train[prostate_train["AGE"] > 70, :])
+
+          # Plot SHAP contributions for one instance (e.g., row 5):
+          model.shap_explain_row_plot(prostate_test, 
+                                      row_index=5, 
+                                      background_frame=prostate_train[prostate_train["AGE"] > 70, :])
+
+
+*References*
+
+.. _ref9:
+
+1. S. Lundberg and S.-I. Lee, “A Unified Approach to Interpreting Model Predictions.” arXiv, Nov. 24, 2017. doi: 10.48550/arXiv.1705.07874.
+
+.. _ref10:
+
+2. H. Chen, S. M. Lundberg, and S.-I. Lee, “Explaining a series of models by propagating Shapley values,” Nat Commun, vol. 13, no. 1, Art. no. 1, Aug. 2022, doi: 10.1038/s41467-022-31384-3.
+
+.. _ref11:
+
+3. G. Laberge and Y. Pequignot, “Understanding Interventional TreeSHAP: How and Why it Works.” arXiv, Dec. 05, 2022. doi: 10.48550/arXiv.2209.15123.
+
+.. _ref12:
+
+4. H. Chen, I. C. Covert, S. M. Lundberg, and S.-I. Lee, “Algorithms to estimate Shapley value feature attributions.” arXiv, Jul. 15, 2022. Accessed: Jul. 18, 2022. [Online]. Available: http://arxiv.org/abs/2207.07605
+
+.. _ref13:
+
+5. M. Sundararajan and A. Najmi, “The many Shapley values for model explanation.” arXiv, Feb. 07, 2020. doi: 10.48550/arXiv.1908.08474.
 
 
 Predict Stage Probabilities
@@ -2583,6 +2983,172 @@ For classification problems, when running ``h2o.predict()`` or ``.predict()``, t
 - If you train a model with training and validation data, the max F1 threshold comes from the validation data model.
 - If you train a model with training data and set the ``nfolds`` parameter, the Max F1 threshold from the training data model metrics is used.
 - If you train a model with the train data and validation data and also set the ``nfolds`` parameter, the Max F1 threshold from the validation data model metrics is used.
+
+Using the previous example, run the following code to find and interact with the model's threshold:
+
+.. tabs::
+    .. code-tab:: r R
+
+        # Retrieve your default threshold:
+        model@model$default_threshold
+        [1] 0.3343532
+
+        # Threshold is important to decide final prediction. Model prediction output 
+        # is a real number between 0-1 and the threshold is used to decide if the 
+        # output will be 0 or 1. Threshold is decided by max F1 metric by default, but
+        # you can reset the threshold:
+        new_threshold <- 0.6917189903
+        old_threshold <- h2o.reset_threshold(model, new_threshold)
+        reseted_model <- h2o.getModel(model@model_id)
+        # Predict with the reset model:
+        reset_pred <- h2o.predict(reseted_model, test)
+        # Compare the predictions:
+        pred
+          predict        p0         p1
+        1       0 0.7260791 0.27392089
+        2       0 0.8193595 0.18064046
+        3       1 0.3400551 0.65994490
+        4       0 0.9853045 0.01469547
+        5       0 0.9411660 0.05883396
+        6       0 0.7392462 0.26075376
+
+        [90 rows x 3 columns] 
+        reset_pred
+          predict        p0         p1
+        1       0 0.7260791 0.27392089
+        2       0 0.8193595 0.18064046
+        3       0 0.3400551 0.65994490
+        4       0 0.9853045 0.01469547
+        5       0 0.9411660 0.05883396
+        6       0 0.7392462 0.26075376
+
+        [90 rows x 3 columns]   
+
+        # You can also get optimal thresholds table for the calculated metrics:
+        h2o.thresholds_and_metric_scores(model)
+        Metrics for Thresholds: Binomial metrics as a function of classification thresholds
+          threshold       f1       f2 f0point5 accuracy precision   recall specificity
+        1  0.998952 0.015748 0.009901 0.038462 0.568966  1.000000 0.007937    1.000000
+        2  0.998798 0.031250 0.019763 0.074627 0.572414  1.000000 0.015873    1.000000
+        3  0.998562 0.046512 0.029586 0.108696 0.575862  1.000000 0.023810    1.000000
+        4  0.996917 0.061538 0.039370 0.140845 0.579310  1.000000 0.031746    1.000000
+        5  0.996690 0.076336 0.049116 0.171233 0.582759  1.000000 0.039683    1.000000
+          absolute_mcc min_per_class_accuracy mean_per_class_accuracy tns fns fps tps
+        1     0.067110               0.007937                0.503968 164 125   0   1
+        2     0.095073               0.015873                0.507937 164 124   0   2
+        3     0.116642               0.023810                0.511905 164 123   0   3
+        4     0.134922               0.031746                0.515873 164 122   0   4
+        5     0.151112               0.039683                0.519841 164 121   0   5
+               tnr      fnr      fpr      tpr idx
+        1 1.000000 0.992063 0.000000 0.007937   0
+        2 1.000000 0.984127 0.000000 0.015873   1
+        3 1.000000 0.976190 0.000000 0.023810   2
+        4 1.000000 0.968254 0.000000 0.031746   3
+        5 1.000000 0.960317 0.000000 0.039683   4
+
+        ---
+            threshold       f1       f2 f0point5 accuracy precision   recall
+        273  0.019254 0.613139 0.798479 0.497630 0.451724  0.442105 1.000000
+        274  0.019193 0.611650 0.797468 0.496063 0.448276  0.440559 1.000000
+        275  0.018216 0.610169 0.796460 0.494505 0.444828  0.439024 1.000000
+        276  0.015723 0.608696 0.795455 0.492958 0.441379  0.437500 1.000000
+        277  0.013736 0.607229 0.794451 0.491420 0.437931  0.435986 1.000000
+        278  0.010055 0.605769 0.793451 0.489891 0.434483  0.434483 1.000000
+            specificity absolute_mcc min_per_class_accuracy mean_per_class_accuracy tns
+        273    0.030488     0.116098               0.030488                0.515244   5
+        274    0.024390     0.103660               0.024390                0.512195   4
+        275    0.018293     0.089615               0.018293                0.509146   3
+        276    0.012195     0.073044               0.012195                0.506098   2
+        277    0.006098     0.051560               0.006098                0.503049   1
+        278    0.000000     0.000000               0.000000                0.500000   0
+            fns fps tps      tnr      fnr      fpr      tpr idx
+        273   0 159 126 0.030488 0.000000 0.969512 1.000000 272
+        274   0 160 126 0.024390 0.000000 0.975610 1.000000 273
+        275   0 161 126 0.018293 0.000000 0.981707 1.000000 274
+        276   0 162 126 0.012195 0.000000 0.987805 1.000000 275
+        277   0 163 126 0.006098 0.000000 0.993902 1.000000 276
+        278   0 164 126 0.000000 0.000000 1.000000 1.000000 277
+
+
+    .. code-tab:: python
+
+        # Retrieve your default threshold:
+        original_threshold = model.default_threshold()
+        origininal_threshold
+        0.3343532308872656
+
+        # Threshold is important to decide final prediction. Model prediction output 
+        # is a real number between 0-1 and the threshold is used to decide if the 
+        # output will be 0 or 1. Threshold is decided by max F1 metric by default, but
+        # you can reset the threshold:
+        from h2o.utils.model_utils import reset_model_threshold
+        new_threshold = 0.6917189903
+        old_returned = reset_model_threshold(model, new_threshold)
+        reset_model = h2o.get_model(model.model_id)
+        reset_threshold = reset_model.default_threshold()
+        # Predict with the reset model:
+        predict_reset = reset_model.predict(test)
+        # Compare the predictions:
+        predict.as_data_frame()
+            predict        p0        p1
+        0         0  0.726079  0.273921
+        1         0  0.819360  0.180640
+        2         1  0.340055  0.659945
+        3         0  0.985305  0.014695
+        4         0  0.941166  0.058834
+        ..      ...       ...       ...
+        85        0  0.989945  0.010055
+        86        0  0.915216  0.084784
+        87        0  0.802202  0.197798
+        88        0  0.893146  0.106854
+        89        0  0.697517  0.302483
+
+        [90 rows x 3 columns] 
+        predict_reset.as_data_frame()
+             predict        p0        p1
+        0         0  0.726079  0.273921
+        1         0  0.819360  0.180640
+        2         0  0.340055  0.659945
+        3         0  0.985305  0.014695
+        4         0  0.941166  0.058834
+        ..      ...       ...       ...
+        85        0  0.989945  0.010055
+        86        0  0.915216  0.084784
+        87        0  0.802202  0.197798
+        88        0  0.893146  0.106854
+        89        0  0.697517  0.302483
+
+        [90 rows x 3 columns]
+
+
+        # You can also get optimal thresholds for calculated metrics:
+        model.thresholds_and_metric_scores()
+        Metrics for Thresholds: Binomial metrics as a function of classification thresholds
+        threshold             f1                    f2                    f0point5              accuracy             precision            recall                specificity           absolute_mcc         min_per_class_accuracy    mean_per_class_accuracy    tns    fns    fps    tps    tnr                   fnr                 fpr                 tpr                   idx
+        --------------------  --------------------  --------------------  --------------------  -------------------  -------------------  --------------------  --------------------  -------------------  ------------------------  -------------------------  -----  -----  -----  -----  --------------------  ------------------  ------------------  --------------------  -----
+        0.9989519331921466    0.015748031496062992  0.009900990099009901  0.038461538461538464  0.5689655172413793   1.0                  0.007936507936507936  1.0                   0.067110075914347    0.007936507936507936      0.503968253968254          164.0  125.0  0.0    1.0    1.0                   0.9920634920634921  0.0                 0.007936507936507936  0
+        0.9987975258192274    0.03125               0.019762845849802372  0.07462686567164178   0.5724137931034483   1.0                  0.015873015873015872  1.0                   0.09507260754532491  0.015873015873015872      0.5079365079365079         164.0  124.0  0.0    2.0    1.0                   0.9841269841269841  0.0                 0.015873015873015872  1
+        0.9985624924762638    0.046511627906976744  0.029585798816568046  0.10869565217391303   0.5758620689655173   1.0                  0.023809523809523808  1.0                   0.11664236870396087  0.023809523809523808      0.5119047619047619         164.0  123.0  0.0    3.0    1.0                   0.9761904761904762  0.0                 0.023809523809523808  2
+        0.9969174729699724    0.06153846153846154   0.03937007874015748   0.14084507042253522   0.5793103448275863   1.0                  0.031746031746031744  1.0                   0.13492226726533396  0.031746031746031744      0.5158730158730158         164.0  122.0  0.0    4.0    1.0                   0.9682539682539683  0.0                 0.031746031746031744  3
+        0.9966901456307525    0.07633587786259541   0.04911591355599214   0.17123287671232879   0.5827586206896552   1.0                  0.03968253968253968   1.0                   0.1511120939571949   0.03968253968253968       0.5198412698412699         164.0  121.0  0.0    5.0    1.0                   0.9603174603174603  0.0                 0.03968253968253968   4
+        0.9962607217715281    0.0909090909090909    0.058823529411764705  0.19999999999999998   0.5862068965517241   1.0                  0.047619047619047616  1.0                   0.1658261839184969   0.047619047619047616      0.5238095238095238         164.0  120.0  0.0    6.0    1.0                   0.9523809523809523  0.0                 0.047619047619047616  5
+        0.9958813646288183    0.10526315789473684   0.06849315068493152   0.22727272727272727   0.5896551724137931   1.0                  0.05555555555555555   1.0                   0.1794289243921387   0.05555555555555555       0.5277777777777778         164.0  119.0  0.0    7.0    1.0                   0.9444444444444444  0.0                 0.05555555555555555   6
+        0.9953616952863942    0.11940298507462686   0.078125              0.2531645569620253    0.593103448275862    1.0                  0.06349206349206349   1.0                   0.19215738980423666  0.06349206349206349       0.5317460317460317         164.0  118.0  0.0    8.0    1.0                   0.9365079365079365  0.0                 0.06349206349206349   7
+        0.9931844263866288    0.13333333333333333   0.08771929824561403   0.2777777777777778    0.596551724137931    1.0                  0.07142857142857142   1.0                   0.20417602581358815  0.07142857142857142       0.5357142857142857         164.0  117.0  0.0    9.0    1.0                   0.9285714285714286  0.0                 0.07142857142857142   8
+        0.9914684607982545    0.14705882352941177   0.09727626459143969   0.3012048192771084    0.6                  1.0                  0.07936507936507936   1.0                   0.21560440805089087  0.07936507936507936       0.5396825396825397         164.0  116.0  0.0    10.0   1.0                   0.9206349206349206  0.0                 0.07936507936507936   9
+        ---                   ---                   ---                   ---                   ---                  ---                  ---                   ---                   ---                  ---                       ---                        ---    ---    ---    ---    ---                   ---                 ---                 ---                   ---
+        0.02104786188185215   0.6191646191646191    0.802547770700637     0.504                 0.46551724137931033  0.4483985765124555   1.0                   0.054878048780487805  0.15686694666165918  0.054878048780487805      0.5274390243902439         9.0    0.0    155.0  126.0  0.054878048780487805  0.0                 0.9451219512195121  1.0                   268
+        0.01982929531238006   0.6176470588235294    0.8015267175572518    0.5023923444976076    0.46206896551724136  0.44680851063829785  1.0                   0.04878048780487805   0.14763311655691352  0.04878048780487805       0.524390243902439          8.0    0.0    156.0  126.0  0.04878048780487805   0.0                 0.9512195121951219  1.0                   269
+        0.0195717496795074    0.6161369193154034    0.8005082592121981    0.5007949125596185    0.4586206896551724   0.4452296819787986   1.0                   0.042682926829268296  0.13785392971591146  0.042682926829268296      0.5213414634146342         7.0    0.0    157.0  126.0  0.042682926829268296  0.0                 0.9573170731707317  1.0                   270
+        0.019517354641280148  0.6146341463414634    0.7994923857868019    0.4992076069730586    0.45517241379310347  0.44366197183098594  1.0                   0.036585365853658534  0.12740304374225983  0.036585365853658534      0.5182926829268293         6.0    0.0    158.0  126.0  0.036585365853658534  0.0                 0.9634146341463414  1.0                   271
+        0.019253554153391784  0.6131386861313868    0.7984790874524713    0.4976303317535545    0.4517241379310345   0.4421052631578947   1.0                   0.03048780487804878   0.11609831608906437  0.03048780487804878       0.5152439024390244         5.0    0.0    159.0  126.0  0.03048780487804878   0.0                 0.9695121951219512  1.0                   272
+        0.019192579063339047  0.6116504854368932    0.7974683544303797    0.49606299212598426   0.4482758620689655   0.4405594405594406   1.0                   0.024390243902439025  0.10365979070385413  0.024390243902439025      0.5121951219512195         4.0    0.0    160.0  126.0  0.024390243902439025  0.0                 0.975609756097561   1.0                   273
+        0.018216084542467745  0.6101694915254238    0.7964601769911506    0.4945054945054945    0.44482758620689655  0.43902439024390244  1.0                   0.018292682926829267  0.08961547839450652  0.018292682926829267      0.5091463414634146         3.0    0.0    161.0  126.0  0.018292682926829267  0.0                 0.9817073170731707  1.0                   274
+        0.015722905721040247  0.6086956521739131    0.7954545454545454    0.49295774647887325   0.4413793103448276   0.4375               1.0                   0.012195121951219513  0.0730435887238472   0.012195121951219513      0.5060975609756098         2.0    0.0    162.0  126.0  0.012195121951219513  0.0                 0.9878048780487805  1.0                   275
+        0.013736246789952753  0.6072289156626506    0.7944514501891551    0.4914196567862715    0.4379310344827586   0.4359861591695502   1.0                   0.006097560975609756  0.05156018027565684  0.006097560975609756      0.5030487804878049         1.0    0.0    163.0  126.0  0.006097560975609756  0.0                 0.9939024390243902  1.0                   276
+        0.01005525887065938   0.6057692307692307    0.7934508816120908    0.48989113530326595   0.43448275862068964  0.43448275862068964  1.0                   0.0                   0.0                  0.0                       0.5                        0.0    0.0    164.0  126.0  0.0                   0.0                 1.0                 1.0                   277
+        [278 rows x 20 columns]
+
 
 Predict Feature Frequency
 ~~~~~~~~~~~~~~~~~~~~~~~~~

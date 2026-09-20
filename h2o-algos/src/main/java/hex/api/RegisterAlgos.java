@@ -24,7 +24,7 @@ public class RegisterAlgos extends AlgoAbstractRegister {
             new hex.tree.drf    .DRF         (true),
             new hex.tree.gbm    .GBM         (true),
             new hex.tree.isofor .IsolationForest(true),
-            new hex.tree.isoforextended .ExtendedIsolationForest(true),
+            new hex.tree.isoforextended.ExtendedIsolationForest(true),
             new hex.aggregator  .Aggregator  (true),
             new hex.word2vec    .Word2Vec    (true),
             new hex.ensemble    .StackedEnsemble(true),
@@ -35,7 +35,12 @@ public class RegisterAlgos extends AlgoAbstractRegister {
             new PSVM(true),
             new hex.rulefit     .RuleFit     (true),
             new hex.tree.uplift.UpliftDRF    (true),
-            new hex.maxrglm     .MaxRGLM     (true)
+            new hex.modelselection.ModelSelection (true),
+            new hex.isotonic    .IsotonicRegression(true),
+            new hex.tree.dt      .DT         (true),
+            new hex.hglm        .HGLM        (true),
+            new hex.adaboost.     AdaBoost   (true)
+            //new hex.knn          .KNN        (true) will be implement in different PR
     };
 
     // "Word2Vec", "Example", "Grep"
@@ -53,6 +58,14 @@ public class RegisterAlgos extends AlgoAbstractRegister {
     context.registerEndpoint("make_glm_model", "POST /3/MakeGLMModel",
             MakeGLMModelHandler.class, "make_model",
             "Make a new GLM model based on existing one");
+
+    context.registerEndpoint("make_unrestricted_model", "POST /3/MakeUnrestrictedGLMModel",
+            MakeGLMModelHandler.class, "make_unrestricted_model",
+            "Make unrestricted GLM model based on existing one with control variables or remove offset effects features enabled.");
+
+    context.registerEndpoint("make_derived_model", "POST /3/MakeDerivedGLMModel",
+              MakeGLMModelHandler.class, "make_derived_model",
+              "Make derived GLM model based on existing one with control variables or remove offset effects features enabled.");
 
     context.registerEndpoint("glm_regularization_path","GET /3/GetGLMRegPath", MakeGLMModelHandler.class, "extractRegularizationPath",
             "Get full regularization path");

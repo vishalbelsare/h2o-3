@@ -40,6 +40,7 @@ The following data sources are supported:
 * A Directory (with many data files inside at the *same* level -- no support for recursive import of data)
 * S3/S3N
 * Native Language Data Structure (c.f. the subsequent section)
+* Google Storage (gs://)
 
 .. code-block:: python
 
@@ -217,7 +218,7 @@ The implementation simply calls the `tolist()` method on the ndarray object. The
 principles that apply to lists are then applied to the result of the `tolist()` operation.
 
 :mod:`pandas.DataFrame` objects can also be converted to H2OFrames. The implementation
-simply calls the `as_matrix()` method on the DataFrame object. The `as_matrix()` method
+simply calls the `values` method on the DataFrame object. The `values` method
 returns an ndarray object, and the above-described ndarray transformation is then invoked,
 so the rules for Python lists also apply here.
 

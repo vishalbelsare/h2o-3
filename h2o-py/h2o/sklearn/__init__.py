@@ -32,7 +32,7 @@ import sys
 
 from sklearn.base import ClassifierMixin, RegressorMixin
 
-from h2o.utils.mixin import register_module
+from h2o.utils.mixin import register_submodule
 from .. import automl
 from .. import estimators
 from .. import transforms
@@ -52,12 +52,7 @@ def _register_submodule(name=None):
     :param name: the name of the submodule or None if no submodule is used
     :return: the module name for the (newly) registered submodule
     """
-    mod_name = __name__
-    if name:
-        mod_name = '.'.join([mod_name, name])
-        mod = register_module(mod_name)
-        setattr(module, name, mod)
-    return mod_name
+    return register_submodule(module, name) if name else __name__ 
 
 
 def _get_custom_params(cls):
@@ -97,12 +92,14 @@ def _estimator_supports_predict_proba(cls):
                                 'H2OAutoEncoderEstimator',
                                 'H2OExtendedIsolationForestEstimator',
                                 'H2OGeneralizedLowRankEstimator',
+                                'H2OInfogram',
                                 'H2OIsolationForestEstimator',
                                 'H2OKMeansEstimator',
-                                'H2OMaxRGLMEstimator',
+                                'H2OModelSelectionEstimator',
                                 'H2OPrincipalComponentAnalysisEstimator',
                                 'H2OSingularValueDecompositionEstimator',
-                                'H2OTargetEncoderEstimator']
+                                'H2OTargetEncoderEstimator'
+                                'H2OHGLMestimator']
 
 
 def _estimator_supports_score(cls):
@@ -110,12 +107,14 @@ def _estimator_supports_score(cls):
                                 'H2OAutoEncoderEstimator',
                                 'H2OExtendedIsolationForestEstimator',
                                 'H2OGeneralizedLowRankEstimator',
+                                'H2OInfogram',
                                 'H2OIsolationForestEstimator',
                                 'H2OKMeansEstimator',
-                                'H2OMaxRGLMEstimator',
+                                'H2OModelSelectionEstimator',
                                 'H2OPrincipalComponentAnalysisEstimator',
                                 'H2OSingularValueDecompositionEstimator',
-                                'H2OTargetEncoderEstimator']
+                                'H2OTargetEncoderEstimator'
+                                'H2OHGLMEstimator']
 
 
 def _estimator_supports_transform(cls):
@@ -200,8 +199,11 @@ def h2o_connection(**init_args):
 _excluded_estimators = (  # e.g. abstract classes
     'H2OEstimator',
     'H2OTransformer',
+    'H2OInfogram',
     'H2OANOVAGLMEstimator',  # fully disabled as it does not support `predict` method.
-    'H2OMaxRGLMEstimator',   # fully disabled as it does no support `predict` method.
+    'H2OModelSelectionEstimator',  # fully disabled as it does no support `predict` method.
+    'H2OIsotonicRegressionEstimator',  # specific in behavior (no classification, just "one feature" in regression)
+    'H2OHGLMEstimator'
 )
 _generic_only_estimators = (  # e.g. unsupervised and misc estimators
     # 'H2OANOVAGLMEstimator',
@@ -212,7 +214,7 @@ _generic_only_estimators = (  # e.g. unsupervised and misc estimators
     'H2OGenericEstimator',
     'H2OIsolationForestEstimator',
     'H2OKMeansEstimator',
-    # 'H2OMaxRGLMEstimator',
+    # 'H2OMModelSelectionEstimator',
     'H2OPrincipalComponentAnalysisEstimator',
     'H2OSingularValueDecompositionEstimator',
     'H2OTargetEncoderEstimator',

@@ -1,13 +1,17 @@
 package hex.genmodel;
 
+import hex.ModelCategory;
 import org.junit.Test;
+
+import java.io.IOException;
+import java.net.URL;
 
 import static org.junit.Assert.*;
 
 public class GenModelTest {
 
   @Test
-  public void testKMeansDistance() throws Exception {
+  public void testKMeansDistance() {
     double[] center = new double[]{1.2, 0.8, 1.0};
     double[] point = new double[]{1.0, Double.NaN, 1.8};
     double dist = GenModel.KMeans_distance(center, point, new String[center.length][]);
@@ -15,7 +19,7 @@ public class GenModelTest {
   }
 
   @Test
-  public void testKMeansDistanceExtended() throws Exception {
+  public void testKMeansDistanceExtended() {
     double[] center = new double[]{1.2, 0.8, 1.0};
     float[] point = new float[]{1.0f, Float.NaN, 1.8f};
     double dist = GenModel.KMeans_distance(center, point, new int[]{-1,-1,-1}, new double[3], new double[3]);
@@ -49,5 +53,57 @@ public class GenModelTest {
     GenModel.setInput(row, to, 1, 3, catOffsets, null, null, false, false);
     assertArrayEquals(new float[]{0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 42}, to, 0);
   }
-  
+
+  @Test
+  public void testGetOutputDomains() throws IOException {
+    URL mojoSource = getClass().getResource("/hex/genmodel/algos/gbm/gbm_variable_importance.zip");
+    assertNotNull(mojoSource);
+    MojoReaderBackend r = MojoReaderBackendFactory.createReaderBackend(mojoSource, MojoReaderBackendFactory.CachingStrategy.MEMORY);
+    MojoModel mojo = MojoModel.load(r);
+
+    final String[][] outputDomains = mojo.getOutputDomains();
+    assertEquals(3, outputDomains.length);
+    assertArrayEquals(new String[]{"0", "1"}, outputDomains[0]);
+    assertNull(outputDomains[1]);
+    assertNull(outputDomains[2]);
+
+    final String[] outputNames = mojo.getOutputNames();
+    assertArrayEquals(new String[]{"predict", "p0", "p1"}, outputNames);
+  }
+
+  @Test
+  public void testGetOutputDomainsSmoke() {
+    for (final ModelCategory mc : ModelCategory.values()) {
+      if (mc.equals(ModelCategory.Unknown))
+        continue;
+      GenModel model = new GenModel(new String[]{"c1", "c2", "c3"}, new String[][]{null, null, new String[]{"a", "b"}}, "c3") {
+        @Override
+        public ModelCategory getModelCategory() {
+          return mc;
+        }
+
+        @Override
+        public String getUUID() {
+          throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public double[] score0(double[] row, double[] preds) {
+          throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean isSupervised() {
+          return true;
+        }
+
+        @Override
+        public String[] getOutputNames() {
+          return new String[]{"predict", "p0", "p1"};
+        }
+      };
+      assertNotNull(model.getOutputDomains());
+    }
+  }
+
 }

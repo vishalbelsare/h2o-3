@@ -28,9 +28,9 @@ public class CVModelBuilder {
         this.parallelization = parallelization;
     }
     
-    protected void prepare(ModelBuilder m) {}
+    protected void prepare(ModelBuilder<?, ?, ?> m) {}
     
-    protected void finished(ModelBuilder m) {}
+    protected void finished(ModelBuilder<?, ?, ?> m) {}
 
     public void bulkBuildModels() {
         final int N = modelBuilders.length;
@@ -41,7 +41,7 @@ public class CVModelBuilder {
             if (job.stop_requested()) {
                 LOG.info("Skipping build of last " + (N - i) + " out of " + N + " cross-validation models");
                 stopAll(submodel_tasks);
-                throw new Job.JobCancelledException();
+                throw new Job.JobCancelledException(job);
             }
             LOG.info("Building cross-validation model " + (i + 1) + " / " + N + ".");
             prepare(modelBuilders[i]);
@@ -94,4 +94,8 @@ public class CVModelBuilder {
         }
     }
 
+    protected Job getJob() {
+        return job;
+    }
+    
 }

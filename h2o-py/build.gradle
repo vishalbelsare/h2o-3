@@ -1,7 +1,7 @@
 description = "H2O Python Package"
 
 dependencies {
-    api project(path: ":h2o-assemblies:main", configuration: 'shadow')
+    api project(path: ":h2o-assemblies:${mainAssemblyName}", configuration: 'shadow')
 }
 
 def buildVersion = new H2OBuildVersion(rootDir, version)
@@ -29,6 +29,13 @@ task createVersionFiles() {
 
             File build_file = new File("${buildDir}/$it/h2o", "buildinfo.txt")
             build_file.write(buildVersion.toString())
+
+            // Telemetry distribution marker, baked per build flavor: "h2o" (full
+            // package) vs "h2o_client" (client-only). Lets the client report
+            // attributes.distribution unambiguously without runtime guessing.
+            String distName = (it == "client") ? "h2o_client" : "h2o"
+            File dist_file = new File("${buildDir}/$it/h2o", "_distribution.py")
+            dist_file.write("# Generated at build time by createVersionFiles (build.gradle); do not edit.\n_DISTRIBUTION = \"${distName}\"\n")
         }
     }
 }
@@ -36,7 +43,7 @@ task createVersionFiles() {
 task verifyDependencies(type: Exec) {
     commandLine getOsSpecificCommandLine([
             pythonexe, "scripts/verify_requirements.py",
-            "--metayaml", "conda/h2o/meta.yaml",
+            "--metayaml", "conda/h2o-main/meta.yaml",
             "--kind", "build"
     ])
 }
@@ -44,7 +51,7 @@ task verifyDependencies(type: Exec) {
 task verifyTestDependencies(type: Exec) {
     commandLine getOsSpecificCommandLine([
             pythonexe, "scripts/verify_requirements.py",
-            "--metayaml", "conda/h2o/meta.yaml",
+            "--metayaml", "conda/h2o-main/meta.yaml",
             "--kind", "test"
     ])
 }
@@ -133,8 +140,11 @@ task pythonVersion(type: Exec) {
 }
 
 
-task cleanUpSmokeTest(type: Delete) {
+task cleanUpTestResults(type: Delete) {
     delete file("${testsPath}/results")
+    doLast {
+        mkdir file("${testsPath}/results")
+    }
 }
 
 task cleanCoverageData(type: Delete) {
@@ -152,7 +162,7 @@ task cleanBuild(type: Delete) {
 //
 // Define the dependencies
 //
-clean.dependsOn cleanBuild, cleanUpSmokeTest, cleanCoverageData
+clean.dependsOn cleanBuild, cleanUpTestResults, cleanCoverageData
 buildDist.dependsOn buildClientDist // to have a predictable order of these 2 
-copyH2OJar.dependsOn ":h2o-assemblies:main:copyJar"
+copyH2OJar.dependsOn ":h2o-assemblies:${mainAssemblyName}:copyJar"
 build.dependsOn copyMainDist

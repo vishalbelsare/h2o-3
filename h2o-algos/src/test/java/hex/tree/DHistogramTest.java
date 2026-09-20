@@ -36,12 +36,12 @@ public class DHistogramTest extends TestUtil {
   public void initCachesZeroPosition() {
     Scope.enter();
     try {
-      DHistogram.HistoQuantiles hq = new DHistogram.HistoQuantiles(Key.make(), new double[]{-1.0d, -0.3, -0.0d, 1.0, 1.2, 1.8});
+      DHistogram.HistoSplitPoints hq = new DHistogram.HistoSplitPoints(Key.make(), new double[]{-1.0d, -0.3, -0.0d, 1.0, 1.2, 1.8});
       DKV.put(hq);
       Scope.track_generic(hq);
 
       DHistogram histo = new DHistogram("test", 20, 1024, (byte) 1, -1, 2, false, false, -0.001,
-              SharedTreeModel.SharedTreeParameters.HistogramType.QuantilesGlobal, 42L, hq._key, null, false, false, null);
+              SharedTreeModel.SharedTreeParameters.HistogramType.QuantilesGlobal, 42L, hq._key, null, false, false, null, null);
       histo.init();
 
       // check that -0.0 was converted to 0.0 by the init method
@@ -58,12 +58,12 @@ public class DHistogramTest extends TestUtil {
   public void findBinForNegativeZero() {
     Scope.enter();
     try {
-      DHistogram.HistoQuantiles hq = new DHistogram.HistoQuantiles(Key.make(), new double[]{-1.0d, -0.0d, 1.0});
+      DHistogram.HistoSplitPoints hq = new DHistogram.HistoSplitPoints(Key.make(), new double[]{-1.0d, -0.0d, 1.0});
       DKV.put(hq);
       Scope.track_generic(hq);
 
       DHistogram histo = new DHistogram("test", 20, 1024, (byte) 1, -1, 2, false, false, -0.001,
-              SharedTreeModel.SharedTreeParameters.HistogramType.QuantilesGlobal, 42L, hq._key, null, false, false, null);
+              SharedTreeModel.SharedTreeParameters.HistogramType.QuantilesGlobal, 42L, hq._key, null, false, false, null, null);
       histo.init();
 
       // check that negative zero can be found
@@ -90,7 +90,7 @@ public class DHistogramTest extends TestUtil {
       values[values.length - 1] = maxEx - 1e-8;
 
       DHistogram histoRand = new DHistogram("rand", 20, 1024, (byte) 0, min, maxEx, false, false, -0.001,
-              SharedTreeModel.SharedTreeParameters.HistogramType.Random, 42L, null, null, false, false, null);
+              SharedTreeModel.SharedTreeParameters.HistogramType.Random, 42L, null, null, false, false, null, null);
       histoRand.init();
 
       // project the random split points into regular space (original values of the column)
@@ -99,11 +99,11 @@ public class DHistogramTest extends TestUtil {
         splitPointsQuant[i] = histoRand.binAt(i);
       }
       // make a quantile-global estimator with conceptually the same split points
-      DHistogram.HistoQuantiles hq = new DHistogram.HistoQuantiles(Key.make(), splitPointsQuant);
+      DHistogram.HistoSplitPoints hq = new DHistogram.HistoSplitPoints(Key.make(), splitPointsQuant);
       DKV.put(hq);
       Scope.track_generic(hq);
       DHistogram histoQuant = new DHistogram("quant", 20, 1024, (byte) 0, min, maxEx, false, false, -0.001,
-              SharedTreeModel.SharedTreeParameters.HistogramType.QuantilesGlobal, 42L, hq._key, null, false, false, null);
+              SharedTreeModel.SharedTreeParameters.HistogramType.QuantilesGlobal, 42L, hq._key, null, false, false, null, null);
       histoQuant.init();
 
       int[] bins_rand = new int[values.length];
@@ -121,7 +121,7 @@ public class DHistogramTest extends TestUtil {
   @Test
   public void testExtractData_double() {
     DHistogram histo = new DHistogram("test", 20, 1024, (byte) 1, -1, 2, false, false, -0.001,
-            SharedTreeModel.SharedTreeParameters.HistogramType.AUTO, 42L, null, null, false, false, null);
+            SharedTreeModel.SharedTreeParameters.HistogramType.AUTO, 42L, null, null, false, false, null, null);
     histo.init();
 
     // init with c1
@@ -147,7 +147,7 @@ public class DHistogramTest extends TestUtil {
   @Test
   public void testExtractData_int() {
     DHistogram histo = new DHistogram("test", 20, 1024, (byte) 1, -1, 2, true, false, -0.001,
-            SharedTreeModel.SharedTreeParameters.HistogramType.AUTO, 42L, null, null, false, false, null);
+            SharedTreeModel.SharedTreeParameters.HistogramType.AUTO, 42L, null, null, false, false, null, null);
     histo.init();
 
     // init with c1
@@ -188,14 +188,14 @@ public class DHistogramTest extends TestUtil {
 
     // optimization enabled
     DHistogram histoOpt = new DHistogram("intOpt-on", 1000, 1024, (byte) 1, 0, 1000, true, false, -0.001,
-            SharedTreeModel.SharedTreeParameters.HistogramType.UniformAdaptive, 42L, null, null, false, false, null);
+            SharedTreeModel.SharedTreeParameters.HistogramType.UniformAdaptive, 42L, null, null, false, false, null, null);
     histoOpt.init();
 
     histoOpt.updateHisto(weights, null, dataInt, ys, null, rows, N, 0, null);
 
     // optimization OFF
     DHistogram histo = new DHistogram("intOpt-off", 1000, 1024, (byte) 1, 0, 1000, false, false, -0.001,
-            SharedTreeModel.SharedTreeParameters.HistogramType.UniformAdaptive, 42L, null, null, false, false, null);
+            SharedTreeModel.SharedTreeParameters.HistogramType.UniformAdaptive, 42L, null, null, false, false, null, null);
     histo.init();
 
     histo.updateHisto(weights, null, data, ys, null, rows, N, 0, null);
@@ -234,7 +234,7 @@ public class DHistogramTest extends TestUtil {
       for (SharedTreeModel.SharedTreeParameters.HistogramType ht : SharedTreeModel.SharedTreeParameters.HistogramType.values()) {
         TreeParameters tp = new TreeParameters();
         tp._histogram_type = ht;
-        if (ht == SharedTreeModel.SharedTreeParameters.HistogramType.AUTO || ht == SharedTreeModel.SharedTreeParameters.HistogramType.UniformAdaptive) {
+        if (ht == SharedTreeModel.SharedTreeParameters.HistogramType.AUTO || ht == SharedTreeModel.SharedTreeParameters.HistogramType.UniformAdaptive || ht == SharedTreeModel.SharedTreeParameters.HistogramType.UniformRobust) {
           assertTrue(DHistogram.useIntOpt(f.vec("int"), tp, null));
         } else {
           assertFalse(DHistogram.useIntOpt(f.vec("int"), tp, null));
@@ -279,5 +279,42 @@ public class DHistogramTest extends TestUtil {
       return null;
     }
   }
-  
+
+  @Test
+  public void testDefineSplitPointsFromCustomSplitPoints_valid() {
+    DHistogram histo = new DHistogram("custom", 1000, 1024, (byte) 1, 0, 1000, false, false, -0.001,
+            SharedTreeModel.SharedTreeParameters.HistogramType.UniformRobust, 42L, null, null, false, false, null, null);
+
+    histo.defineSplitPointsFromCustomSplitPoints(new double[]{-2, -1, 0, 1, 42, 998, 999, 1000, 1001});
+
+    assertTrue(histo._absoluteSplitPts);
+    assertArrayEquals(new double[]{0, 1, 42, 998, 999}, histo._splitPts, 0);
+    assertEquals(SharedTreeModel.SharedTreeParameters.HistogramType.UniformRobust, histo._histoType);
+  }
+
+  @Test
+  public void testDefineSplitPointsFromCustomSplitPoints_revertToUniformAdaptive() {
+    DHistogram histo = new DHistogram("custom", 1000, 1024, (byte) 1, 0, 1000, false, false, -0.001,
+            SharedTreeModel.SharedTreeParameters.HistogramType.UniformRobust, 42L, null, null, false, false, null, null);
+
+    histo.defineSplitPointsFromCustomSplitPoints(new double[]{-2, -1});
+
+    assertFalse(histo._absoluteSplitPts);
+    assertNull(histo._splitPts);
+    assertEquals(SharedTreeModel.SharedTreeParameters.HistogramType.UniformAdaptive, histo._histoType);
+  }
+
+  @Test
+  public void testNonEmptyBins() {
+    DHistogram histo = new DHistogram("nonEmpty", 1000, 1024, (byte) 1, 0, 1000, false, false, -0.001,
+            SharedTreeModel.SharedTreeParameters.HistogramType.UniformAdaptive, 42L, null, null, false, false, null, null);
+
+    assertEquals(0, histo.nonEmptyBins());
+
+    histo.init();
+    histo.updateHisto(null, null, new double[]{10, Double.NaN, 999}, new double[]{0.1, 0.2, 0.3}, null, new int[]{0, 1, 2}, 3, 0, null);
+    
+    assertEquals(2, histo.nonEmptyBins());
+  }
+
 }

@@ -1,6 +1,10 @@
 Using H2O with Kubernetes
 =========================
 
+.. note::
+
+   Kubernetes packages are part of H2O-3 Secure, the commercially supported tier of H2O-3. Contact enterprise@h2o.ai.
+
 H2O Software Stack
 ------------------
 
@@ -9,7 +13,7 @@ In order to understand the behavior and limitations of a H2O distributed cluster
 This implies that H2O nodes must be treated as stateful by Kubernetes. In Kubernetes, a set of pods sharing a common state is handled by a `StatefulSet <https://kubernetes.io/docs/tutorials/stateful-application/basic-stateful-set/>`__. Kubernetes tooling for stateless applications in not applicable to H2O. The proper way to deploy H2O is to set ``kind: StatefulSet``. A StatefulSet ensures:
 
 - H2O Nodes are treated as a single unit, being brought up and down gracefully and together.
-- No attemps will be made by K8S healthcheck (if defined) to restart individual H2O nodes in case of an error.
+- No attempts will be made by K8S healthcheck (if defined) to restart individual H2O nodes in case of an error.
 - Persistent storages and volumes associated with the StatefulSet of H2O Nodes will not be deleted once the cluster is brought down.
 
 
@@ -26,24 +30,35 @@ After H2O is started, there must be a way for H2O nodes to "find" themselves and
 
 For reproducibility, resource limits and requests should always be set to equal values.
 
+**Note**: Official K8s images don’t apply any `security settings <../security.html>`__. The default user is ``root``. If you require a secure interface with H2O running the image, you need to change the user and execution command to add security parameters before running the image. The following is the default command used in Docker images:
+
+::
+  
+  java -Djava.library.path=/opt/h2oai/h2o-3/xgb_lib_dir -XX:+UseContainerSupport -XX:MaxRAMPercentage=50 -jar /opt/h2oai/h2o-3/h2o.jar
+
+
 Headless Service
 ~~~~~~~~~~~~~~~~
 
 .. code:: yaml
 
-  apiVersion: networking.k8s.io/v1beta1
-  kind: Ingress
+  apiVersion: v1
+  kind: Service
   metadata:
-    name: h2o-ingress
-    namespace: default
+    name: h2o-service
+    namespace: <namespace-name>
   spec:
-    rules:
-    - http:
-        paths:
-        - path: /
-          backend:
-            serviceName: h2o-service
-            servicePort: 80
+    type: ClusterIP
+    clusterIP: None
+    selector:
+      app: h2o-k8s
+    ports:
+    - protocol: TCP
+      port: 54321
+
+The ``clusterIP: None`` defines the service as headless, and ``port: 54321`` is the default H2O port. Users and client libraries use this port to talk to the H2O cluster.
+
+The ``app: h2o-k8s`` setting is the name of the application with H2O pods inside. Be sure this setting corresponds to the name of the chosen H2O deployment name.
 
 StatefulSet
 ~~~~~~~~~~~
@@ -54,49 +69,45 @@ StatefulSet
   kind: StatefulSet
   metadata:
     name: h2o-stateful-set
-    namespace: default
+    namespace: ds-h2o
   spec:
     serviceName: h2o-service
     podManagementPolicy: "Parallel"
     replicas: 3
     selector:
       matchLabels:
-        app: h2o
+        app: h2o-k8s
     template:
       metadata:
         labels:
-          app: h2o
+          app: h2o-k8s
       spec:
         containers:
-          - name: h2o
-            image: 'h2oai/h2o-open-source-k8s'
-            command: ["/bin/bash", "-c", "java -XX:+UseContainerSupport -XX:MaxRAMPercentage=90 -jar /opt/h2oai/h2o-3/h2o.jar"]
-            ports:
-              - containerPort: 54321
-                protocol: TCP
-            readinessProbe:
-              httpGet:
-                path: /kubernetes/isLeaderNode
-                port: 8081
-              initialDelaySeconds: 5
-              periodSeconds: 5
-              failureThreshold: 1
-            resources:
-              limits:
-                cpu: 1
-                memory: 256Mi
-              requests:
-                cpu: 1
-                memory: 256Mi
-            env:
-            - name: H2O_KUBERNETES_SERVICE_DNS
-              value: h2o-service.default.svc.cluster.local
-            - name: H2O_NODE_LOOKUP_TIMEOUT
-              value: '180'
-            - name: H2O_NODE_EXPECTED_COUNT
-              value: '3'
-            - name: H2O_KUBERNETES_API_PORT
-              value: '8081'
+        - name: h2o-k8s
+          image: h2oai/h2o-open-source-k8s:latest
+          resources:
+            requests:
+              memory: "4Gi"
+          ports:
+            - containerPort: 54321
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /kubernetes/isLeaderNode
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 1
+          env:
+          - name: H2O_KUBERNETES_SERVICE_DNS
+            value: h2o-service.<namespace-name>.svc.cluster.local
+          - name: H2O_NODE_LOOKUP_TIMEOUT
+            value: '180'
+          - name: H2O_NODE_EXPECTED_COUNT
+            value: '3'
+          - name: H2O_KUBERNETES_API_PORT
+            value: '8081'
+
 
 Besides the standardized Kubernetes settings (e.g. replicas: 3 defining the number of pods with H2O instantiated), there are several settings to pay attention to:
 
@@ -140,7 +151,7 @@ In order to expose H2O and make it available from the outside of the Kubernetes 
   kind: Ingress
   metadata:
     name: h2o-ingress
-    namespace: default
+    namespace: <namespace-name>
   spec:
     rules:
     - http:

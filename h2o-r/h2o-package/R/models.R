@@ -1,9 +1,9 @@
-#'
-#' H2O Model Related Functions
-#'
+#
+# H2O Model Related Functions
+#
 #' @importFrom graphics strwidth par legend polygon arrows points grid
 #' @importFrom grDevices dev.copy dev.off png rainbow adjustcolor
-
+#' @include classes.R
 NULL
 
 #-----------------------------------------------------------------------------------------------------------------------
@@ -17,7 +17,10 @@ NULL
 #' @param x features
 #' @param y response
 #' @param autoencoder autoencoder flag
+#' @noRd
 .verify_dataxy <- function(data, x, y, autoencoder = FALSE) {
+   if (is(x, "H2OInfogram"))
+     x<-x@admissible_features
   if(!is.null(x) && !is.character(x) && !is.numeric(x)) # only check if x is not null
     stop('`x` must be column names or indices')
   if( !autoencoder )
@@ -116,7 +119,7 @@ NULL
     .eval.frame(params$validation_frame)
   if (length(grep("stopping_metric", attributes(params)))>0) {
     if (params$stopping_metric=="r2")
-      stop("r2 cannot be used as an early stopping_metric yet.  Check this JIRA https://0xdata.atlassian.net/browse/PUBDEV-5381 for progress.")
+      stop("r2 cannot be used as an early stopping_metric yet.  Check this JIRA https://github.com/h2oai/h2o-3/issues/12248 for progress.")
   }
   if (algo=="pca" && is.null(params$k)) # make sure to set k=1 for default for pca
     params$k=1
@@ -150,7 +153,7 @@ NULL
 .h2o.processResponseWarnings <- function(res) {
   if(length(res$messages) != 0L){
     warn <- lapply(res$messages, function(y) {
-      if(class(y) == "list" && y$message_type == "WARN" )
+      if(is.list(y) && y$message_type == "WARN" )
         paste0(y$message, ".\n")
       else ""
     })
@@ -752,9 +755,130 @@ predict_leaf_node_assignment.H2OModel <- function(object, newdata, type = c("Pat
 #' @export
 h2o.predict_leaf_node_assignment <- predict_leaf_node_assignment.H2OModel
 
+#' Use GRLM to transform a frame.
+#'
+#' @param model H2O GRLM model
+#' @param fr H2OFrame
+#' @return Returns a transformed frame
+#'
+#' @examples
+#' \dontrun{
+#' library(h2o)
+#' h2o.init()
+#'
+#' # Import the USArrests dataset into H2O:
+#' arrests <- h2o.importFile(
+#'   "https://s3.amazonaws.com/h2o-public-test-data/smalldata/pca_test/USArrests.csv"
+#' )
+#'
+#' # Split the dataset into a train and valid set:
+#' arrests_splits <- h2o.splitFrame(data = arrests, ratios = 0.8, seed = 1234)
+#' train <- arrests_splits[[1]]
+#' valid <- arrests_splits[[2]]
+#'
+#' # Build and train the model:
+#' glrm_model = h2o.glrm(training_frame = train,
+#'                       k = 4,
+#'                       loss = "Quadratic",
+#'                       gamma_x = 0.5,
+#'                       gamma_y = 0.5,
+#'                       max_iterations = 700,
+#'                       recover_svd = TRUE,
+#'                       init = "SVD",
+#'                       transform = "STANDARDIZE")
+#'
+#' # Eval performance:
+#' arrests_perf <- h2o.performance(glrm_model)
+#'
+#' # Generate predictions on a validation set (if necessary):
+#' arrests_pred <- h2o.predict(glrm_model, newdata = valid)
+#'
+#' # Transform the data using the dataset "valid" to retrieve the new coefficients:
+#' glrm_transform <- h2o.transform_frame(glrm_model, valid)
+#'}
+#' @export
+h2o.transform_frame <- function(model, fr) {
+  if (!is(model, "H2OModel") || (is(model, "H2OModel") && model@algorithm != "glrm")) stop("h2o.transform_frame can only be applied to GLRM H2OModel instance.")
+  return(.newExpr("transform", model@model_id, h2o.getId(fr)))
+}
+
+#' Retrieve the results to view the best predictor subsets.
+#'
+#' @param model H2OModelSelection  object
+#' @return Returns an H2OFrame object
+#'
+#' @examples
+#' \dontrun{
+#' library(h2o)
+#' h2o.init()
+#'
+#' # Import the prostate dataset:
+#' prostate <- h2o.importFile(
+#'    "http://s3.amazonaws.com/h2o-public-test-data/smalldata/logreg/prostate.csv"
+#' )
+#'
+#' # Set the predictors & response:
+#' predictors <- c("AGE", "RACE", "CAPSULE", "DCAPS", "PSA", "VOL", "DPROS")
+#' response <- "GLEASON"
+#'
+#' # Build & train the model:
+#' allsubsetsModel <- h2o.modelSelection(x = predictors,
+#'                                       y = response,
+#'                                       training_frame = prostate,
+#'                                       seed = 12345,
+#'                                       max_predictor_number = 7,
+#'                                       mode = "allsubsets")
+#'
+#' # Retrieve the results (H2OFrame containing best model_ids, best_r2_value, & predictor subsets):
+#' results <- h2o.result(allsubsetsModel)
+#' print(results)
+#'
+#' # Retrieve the list of coefficients:
+#' coeff <- h2o.coef(allsubsetsModel)
+#' print(coeff)
+#'
+#' # Retrieve the list of coefficients for a subset size of 3:
+#' coeff3 <- h2o.coef(allsubsetsModel, 3)
+#' print(coeff3)
+#'
+#' # Retrieve the list of standardized coefficients:
+#' coeff_norm <- h2o.coef_norm(allsubsetsModel)
+#' print(coeff_norm)
+#'
+#' # Retrieve the list of standardized coefficients for a subset size of 3:
+#' coeff_norm3 <- h2o.coef_norm(allsubsetsModel)
+#' print(coeff_norm3)
+#'
+#' # Check the variables that were added during this process:
+#' h2o.get_predictors_added_per_step(allsubsetsModel)
+#'
+#' # To find out which variables get removed, build a new model with ``mode = "backward``
+#' # using the above training information:
+#' bwModel <- h2o.modelSelection(x = predictors,
+#'                               y = response,
+#'                               training_frame = prostate,
+#'                               seed = 12345,
+#'                               max_predictor_number = 7,
+#'                               mode = "backward")
+#' h2o.get_predictors_removed_per_step(bwModel)
+#'
+#' # To build the fastest model with ModelSelection, use ``mode = "maxrsweep"``:
+#' sweepModel <- h2o.modelSelection(x = predictors,
+#'                                  y = response,
+#'                                  training_frame = prostate,
+#'                                  mode = "maxrsweep",
+#'                                  build_glm_model = FALSE,
+#'                                  max_predictor_number = 3,
+#'                                  seed = 12345)
+#'
+#' # Retrieve the results to view the best predictor subsets:
+#' h2o.result(sweepModel)
+#' }
+#'
+#' @export
 h2o.result <- function(model) {
   if (!is(model, "H2OModel")) stop("h2o.result can only be applied to H2OModel instances with constant results")
-  return(as.data.frame(.newExpr("result", model@model_id)))
+  return(.newExpr("result", model@model_id))
 }
 
 h2o.crossValidate <- function(model, nfolds, model.type = c("gbm", "glm", "deeplearning"), params, strategy = c("mod1", "random")) {
@@ -864,6 +988,15 @@ h2o.staged_predict_proba <- staged_predict_proba.H2OModel
 #'                 If bottom_n<0 then sort all SHAP values in ascending order
 #'                 If top_n<0 && bottom_n<0 then sort all SHAP values in descending order
 #' @param compare_abs True to compare absolute values of contributions
+#' @param background_frame Optional frame, that is used as the source of baselines for
+#'                         the baseline SHAP (when output_per_reference == TRUE) or for
+#'                         the marginal SHAP (when output_per_reference == FALSE).
+#' @param output_space If TRUE, linearly scale the contributions so that they sum up to the prediction.
+#'                     NOTE: This will result only in approximate SHAP values even if the model supports exact SHAP calculation.
+#'                     NOTE: This will not have any effect if the estimator doesn't use a link function.
+#' @param output_per_reference If TRUE, return baseline SHAP, i.e., contribution for each data point for each reference from the background_frame.
+#'                             If FALSE, return TreeSHAP if no background_frame is provided, or marginal SHAP if background frame is provided.
+#'                             Can be used only with background_frame.
 #' @param ... additional arguments to pass on.
 #' @return Returns an H2OFrame contain feature contributions for each input row.
 #' @seealso \code{\link{h2o.gbm}} and  \code{\link{h2o.randomForest}} for model
@@ -890,13 +1023,22 @@ h2o.staged_predict_proba <- staged_predict_proba.H2OModel
 #' h2o.predict_contributions(prostate_gbm, prostate, top_n=-1)
 #' # Compute SHAP and pick the top two highest and top two lowest
 #' h2o.predict_contributions(prostate_gbm, prostate, top_n=2, bottom_n=2)
+#' 
+#' # Compute Marginal SHAP, this enables looking at the contributions against different
+#' # baselines, e.g., older people in the following example
+#' h2o.predict_contributions(prostate_gbm, prostate, background_frame=prostate[prostate$AGE > 75, ])
 #' }
 #' @export
-predict_contributions.H2OModel <- function(object, newdata, output_format = c("original", "compact"), top_n=0, bottom_n=0, compare_abs=FALSE, ...) {
+predict_contributions.H2OModel <- function(object, newdata, output_format = c("compact", "original"), top_n=0, bottom_n=0, compare_abs=FALSE,
+                                           background_frame = NULL, output_space = FALSE, output_per_reference = FALSE, ...) {
     if (missing(newdata)) {
         stop("predictions with a missing `newdata` argument is not implemented yet")
     }
-    params <- list(predict_contributions = TRUE, top_n=top_n, bottom_n=bottom_n, compare_abs=compare_abs)
+    .check_model_suitability_for_calculation_of_contributions(object, background_frame)
+    params <- list(predict_contributions = TRUE, top_n=top_n, bottom_n=bottom_n, compare_abs=compare_abs,
+         background_frame=if (is.H2OFrame(background_frame)) h2o.getId(background_frame) else NULL,
+         output_space=output_space, output_per_reference=output_per_reference
+    )
     params$predict_contributions_output_format <- match.arg(output_format)
     url <- paste0('Predictions/models/', object@model_id, '/frames/',  h2o.getId(newdata))
     res <- .h2o.__remoteSend(url, method = "POST", .params = params, h2oRestApiVersion = 4)
@@ -909,6 +1051,59 @@ predict_contributions.H2OModel <- function(object, newdata, output_format = c("o
 #' @rdname predict_contributions.H2OModel
 #' @export
 h2o.predict_contributions <- predict_contributions.H2OModel
+
+#' Output row to tree assignment for the model and provided training data.
+#'
+#' Output is frame of size nrow = nrow(original_training_data) and ncol = number_of_trees_in_model+1 in format: 
+#'     row_id    tree_1    tree_2    tree_3
+#'          0         0         1         1
+#'          1         1         1         1
+#'          2         1         0         0
+#'          3         1         1         0
+#'          4         0         1         1
+#'          5         1         1         1
+#'          6         1         0         0
+#'          7         0         1         0
+#'          8         0         1         1
+#'          9         1         0         0
+#' 
+#' Where 1 in the tree_\{number\} cols means row is used in the tree and 0 means that row is not used.
+#' The structure of the output depends on sample_rate or sample_size parameter setup.
+#'
+#' Note: Multinomial classification generate tree for each category, each tree use the same sample of the data.
+#'
+#' @param object a fitted \linkS4class{H2OModel} object
+#' @param original_training_data An H2OFrame object that was used for model training. Currently there is no validation of the input.
+#' @param ... additional arguments to pass on.
+#' @return Returns an H2OFrame contain row to tree assignment for each tree and row.
+#' @examples
+#' \dontrun{
+#' library(h2o)
+#' h2o.init()
+#' prostate_path <- system.file("extdata", "prostate.csv", package = "h2o")
+#' prostate <- h2o.uploadFile(path = prostate_path)
+#' prostate_gbm <- h2o.gbm(4:9, "AGE", prostate, sample_rate = 0.6)
+#' # Get row to tree assignment
+#' h2o.row_to_tree_assignment(prostate_gbm, prostate)
+#' }
+#' @export
+row_to_tree_assignment.H2OModel <- function(object, original_training_data, ...) {
+    if (missing(original_training_data)) {
+        stop("row_to_tree_assignment with a missing `original_training_data` argument is not implemented yet")
+    }
+    params <- list(row_to_tree_assignment = TRUE)
+    url <- paste0('Predictions/models/', object@model_id, '/frames/',  h2o.getId(original_training_data))
+    res <- .h2o.__remoteSend(url, method = "POST", .params = params, h2oRestApiVersion = 4)
+    job_key <- res$key$name
+    dest_key <- res$dest$name
+    .h2o.__waitOnJob(job_key)
+    h2o.getFrame(dest_key)
+}
+
+#' @rdname row_to_tree_assignment.H2OModel
+#' @export
+h2o.row_to_tree_assignment <- row_to_tree_assignment.H2OModel
+
 
 #' Retrieve the number of occurrences of each feature for given observations 
 #  on their respective paths in a tree ensemble model.
@@ -953,12 +1148,13 @@ h2o.feature_frequencies <- feature_frequencies.H2OModel
 #' @param train A logical value indicating whether to return the training metrics (constructed during training).
 #'
 #' Note: when the trained h2o model uses balance_classes, the training metrics constructed during training will be from the balanced training dataset.
-#' For more information visit: \url{https://0xdata.atlassian.net/browse/TN-9}
+#' For more information visit: \url{https://github.com/h2oai/h2o-3/discussions/15518}
 #' @param valid A logical value indicating whether to return the validation metrics (constructed during training).
 #' @param xval A logical value indicating whether to return the cross-validation metrics (constructed during training).
 #' @param data (DEPRECATED) An H2OFrame. This argument is now called `newdata`.
 #' @param auc_type For multinomila model only. Set default multinomial AUC type. Must be one of: "AUTO", "NONE", "MACRO_OVR", "WEIGHTED_OVR", "MACRO_OVO",
 #'        "WEIGHTED_OVO". Default is "NONE"
+#' @param auuc_type For binomial model only. Set default AUUC type. Must be one of: "AUTO", "GINI", "GAIN", "LIFT". Default is NULL.
 #' @return Returns an object of the \linkS4class{H2OModelMetrics} subclass.
 #' @examples
 #' \dontrun{
@@ -977,7 +1173,7 @@ h2o.feature_frequencies <- feature_frequencies.H2OModel
 #' h2o.performance(model = prostate_gbm_balanced, train = TRUE)
 #' }
 #' @export
-h2o.performance <- function(model, newdata=NULL, train=FALSE, valid=FALSE, xval=FALSE, data=NULL, auc_type="NONE") {
+h2o.performance <- function(model, newdata=NULL, train=FALSE, valid=FALSE, xval=FALSE, data=NULL, auc_type="NONE", auuc_type=NULL) {
 
   # data is now deprecated and the new arg name is newdata
   if (!is.null(data)) {
@@ -994,11 +1190,15 @@ h2o.performance <- function(model, newdata=NULL, train=FALSE, valid=FALSE, xval=
   if(!is.logical(xval) || length(xval) != 1L || is.na(xval)) stop("`xval` must be TRUE or FALSE")
   if(sum(valid, xval, train) > 1) stop("only one of `train`, `valid`, and `xval` can be TRUE")
   if(!(auc_type %in% c("AUTO", "NONE", "MACRO_OVR", "WEIGHTED_OVR", "MACRO_OVO", "WEIGHTED_OVO"))) stop("`auc_type` must be \"AUTO\", \"NONE\", \"MACRO_OVR\", \"WEIGHTED_OVR\", \"MACRO_OVO\", or \"WEIGHTED_OVO\".")
-
+  if(!is.null(auuc_type) && !(auuc_type %in% c("AUTO", "GINI", "LIFT", "GAIN"))) stop("`auuc_type` must be \"AUTO\", \"GINI\", \"LIFT\" or \"GAIN\"." )
+    
   missingNewdata <- missing(newdata) || is.null(newdata)
   if( missingNewdata && auc_type != "NONE") {
     print("WARNING: The `auc_type` parameter is set but it is not used because the `newdata` parameter is NULL.")
   }
+  if( missingNewdata && !is.null(auuc_type)) {
+    print("WARNING: The `auuc_type` parameter is set but it is not used because the `newdata` parameter is NULL.")
+  }  
   if( !missingNewdata ) {
     if (!is.null(model@parameters$y)  &&  !(model@parameters$y %in% names(newdata))) {
       print("WARNING: Model metrics cannot be calculated and metric_json is empty due to the absence of the response column in your dataset.")
@@ -1013,10 +1213,14 @@ h2o.performance <- function(model, newdata=NULL, train=FALSE, valid=FALSE, xval=
     } else if(!is.null(model@parameters$auc_type) && model@parameters$auc_type != "NONE"){
         parms[["auc_type"]] <- model@parameters$auc_type
     }
+    if(!is.null(auuc_type)){
+        parms[["auuc_type"]] <- auuc_type
+    } else if(!is.null(model@parameters$auuc_type)){
+        parms[["auuc_type"]] <- model@parameters$auuc_type
+    }
     res <- .h2o.__remoteSend(method = "POST", .h2o.__MODEL_METRICS(model@model_id, newdata.id), .params = parms)
 
     ####
-    # FIXME need to do the client-side filtering...  PUBDEV-874:   https://0xdata.atlassian.net/browse/PUBDEV-874
     model_metrics <- Filter(function(mm) { mm$frame$name==newdata.id}, res$model_metrics)[[1]]   # filter on newdata.id, R's builtin Filter function
     #
     ####
@@ -1056,8 +1260,11 @@ h2o.performance <- function(model, newdata=NULL, train=FALSE, valid=FALSE, xval=
 #         Possibilities are MACRO_OVO, MACRO_OVR, WEIGHTED_OVO, WEIGHTED_OVR (OVO = One vs. One, OVR = One vs. Rest)
 #' @param auuc_type (optional) For uplift binomial classification you have to specify which type of AUUC will be used to 
 #'        calculate this metric. Possibilities are gini, lift, gain, AUTO. Default is AUTO which means qini.
-#' @param auuc_nbins (optional) For uplift binomial classification you have to specify number of bins to be used 
+#' @param auuc_nbins (optional) For uplift binomial classification you can specify number of bins to be used 
 #'        for calculation the AUUC. Default is -1, which means 1000.
+#' @param custom_auuc_thresholds (optional) For uplift binomial classification you can specify exact thresholds to 
+#'        calculate AUUC. Default is NULL. If the thresholds are not defined, auuc_nbins will be used to calculate 
+#'        new thresholds from the predicted data. 
 #' @return Returns an object of the \linkS4class{H2OModelMetrics} subclass.
 #' @examples
 #' \dontrun{
@@ -1072,7 +1279,7 @@ h2o.performance <- function(model, newdata=NULL, train=FALSE, valid=FALSE, xval=
 #' }
 #' @export
 h2o.make_metrics <- function(predicted, actuals, domain=NULL, distribution=NULL, weights=NULL, treatment=NULL, 
-                                auc_type="NONE", auuc_type="AUTO", auuc_nbins=-1) {
+                                auc_type="NONE", auuc_type="AUTO", auuc_nbins=-1, custom_auuc_thresholds=NULL) {
   predicted <- .validate.H2OFrame(predicted, required=TRUE)
   actuals <- .validate.H2OFrame(actuals, required=TRUE)
   weights <- .validate.H2OFrame(weights, required=FALSE)
@@ -1088,15 +1295,18 @@ h2o.make_metrics <- function(predicted, actuals, domain=NULL, distribution=NULL,
     params$weights_frame <- h2o.getId(weights)
   }
   if (!is.null(treatment)) {
-    params$treatment_frame <- h2o.getId(treatment)
+      params$treatment_frame <- h2o.getId(treatment)
       if (!(auuc_type %in% c("qini", "lift", "gain", "AUTO"))) {
         stop("auuc_type argument must be gini, lift, gain or AUTO")
       }
       if (auuc_nbins < -1 || auuc_nbins == 0) {
         stop("auuc_nbins must be -1 or higher than 0.")
       }
-      params$auuc_type = auuc_type
-      params$auuc_nbins = auuc_nbins
+      params$auuc_type <- auuc_type
+      params$auuc_nbins <- auuc_nbins
+      if(!is.null(custom_auuc_thresholds)){ 
+         params$custom_auuc_thresholds <- paste("[", paste(custom_auuc_thresholds, collapse = ", "),"]")
+      }
   }
   params$domain <- domain
   params$distribution <- distribution
@@ -1114,7 +1324,7 @@ h2o.make_metrics <- function(predicted, actuals, domain=NULL, distribution=NULL,
     params[["domain"]] <- out
   }
   params["auc_type"] <- auc_type  
-  url <- paste0("ModelMetrics/predictions_frame/",params$predictions_frame,"/actuals_frame/",params$actuals_frame)
+  url <- paste0("ModelMetrics/predictions_frame/",params$predictions_frame,"/actuals_frame/",params$actuals_frame,"/treatment_frame/",params$treatment_frame)
   res <- .h2o.__remoteSend(method = "POST", url, .params = params)
   model_metrics <- res$model_metrics
   metrics <- model_metrics[!(names(model_metrics) %in% c("__meta", "names", "domains", "model_category"))]
@@ -1192,16 +1402,17 @@ h2o.auc <- function(object, train=FALSE, valid=FALSE, xval=FALSE) {
   invisible(NULL)
 }
 
-#' Retrieve the default AUUC
+#' Retrieve AUUC
 #'
-#' Retrieves the AUUC value from an \linkS4class{H2OBinomialUpliftMetrics}. The type of AUUC depends on auuc_type which
-#' was set before training. If you need specific AUUC, see h2o.auuc_table function.
+#' Retrieves the AUUC value from an \linkS4class{H2OBinomialUpliftMetrics}. If the metric parameter is "AUTO", 
+#' the type of AUUC depends on auuc_type which was set before training. If you need specific AUUC, set metric parameter.
 #' If "train" and "valid" parameters are FALSE (default), then the training AUUC value is returned. If more
 #' than one parameter is set to TRUE, then a named vector of AUUCs are returned, where the names are "train", "valid".
 #'
 #' @param object An \linkS4class{H2OBinomialUpliftMetrics}
 #' @param train Retrieve the training AUUC
 #' @param valid Retrieve the validation AUUC
+#' @param metric Specify the AUUC metric to get specific AUUC. Possibilities are NULL, "qini", "lift", "gain".
 #' @examples
 #' \dontrun{
 #' library(h2o)
@@ -1212,30 +1423,52 @@ h2o.auc <- function(object, train=FALSE, valid=FALSE, xval=FALSE) {
 #' train$conversion <- as.factor(train$conversion)
 #' 
 #' model <- h2o.upliftRandomForest(training_frame=train, x=sprintf("f%s",seq(0:10)), y="conversion",
-#'                                        ntrees=10, max_depth=5, treatment_column="treatment", 
-#'                                        auuc_type="AUTO")
+#'                                 ntrees=10, max_depth=5, treatment_column="treatment", 
+#'                                 auuc_type="AUTO")
 #' perf <- h2o.performance(model, train=TRUE) 
 #' h2o.auuc(perf)
 #' }
 #' @export
-h2o.auuc <- function(object, train=FALSE, valid=FALSE) {
-    if( is(object, "H2OModelMetrics") ) return( object@metrics$AUUC )
+h2o.auuc <- function(object, train=FALSE, valid=FALSE, metric=NULL) {
+    if(!is.null(metric) && !metric %in% c("qini", "lift", "gain")) 
+        stop("metric must be NULL, 'qini', 'lift' or 'gain'")
+    if( is(object, "H2OModelMetrics") ) {
+        if(is.null(metric)) { 
+            return( object@metrics$AUUC )
+        } else {
+            return( eval(parse(text=paste("object@metrics$auuc_table$", metric,"[1]", sep=""))))
+        }
+    }
     if( is(object, "H2OModel") ) {
         model.parts <- .model.parts(object)
         if ( !train && !valid ) {
-            metric <- model.parts$tm@metrics$AUUC
-            if ( !is.null(metric) ) return(metric)
+            if (is.null(metric)) { 
+                mm <- model.parts$tm@metrics$AUUC
+            } else {
+                mm <- eval(parse(text=paste("model.parts$tm@metrics$auuc_table$", metric,"[1]", sep="")))
+            }
+            if ( !is.null(mm) ) return(mm)
         }
         v <- c()
         v_names <- c()
         if ( train ) {
-            v <- c(v,model.parts$tm@metrics$AUUC)
+            if (is.null(metric)) { 
+                mm <- model.parts$tm@metrics$AUUC
+            } else {
+                mm <- eval(parse(text=paste("model.parts$tm@metrics$auuc_table$", metric,"[1]", sep="")))
+            }
+            v <- c(v, mm)
             v_names <- c(v_names,"train")
         }
         if ( valid ) {
             if( is.null(model.parts$vm) ) return(invisible(.warn.no.validation()))
             else {
-                v <- c(v,model.parts$vm@metrics$AUUC)
+                if (is.null(metric)) { 
+                    mm <- model.parts$vm@metrics$AUUC
+                } else {
+                    mm <- eval(parse(text=paste("model.parts$vm@metrics$auuc_table$", metric,"[1]", sep="")))
+                }
+                v <- c(v, mm)
                 v_names <- c(v_names,"valid")
             }
         }
@@ -1248,10 +1481,255 @@ h2o.auuc <- function(object, train=FALSE, valid=FALSE) {
     invisible(NULL)
 }
 
+#' Retrieve Average Treatment Effect
+#'
+#' Retrieves ATE from an \linkS4class{H2OBinomialUpliftMetrics}.
+#' If "train" and "valid" parameters are FALSE (default), then the training ATE is returned. If more
+#' than one parameter is set to TRUE, then a named vector of ATE values are returned, where the names are "train", "valid".
+#'
+#' @param object An \linkS4class{H2OBinomialUpliftMetrics} or 
+#' @param train Retrieve the training ATE value
+#' @param valid Retrieve the validation ATE value
+#' @examples
+#' \dontrun{
+#' library(h2o)
+#' h2o.init()
+#' f <- "https://s3.amazonaws.com/h2o-public-test-data/smalldata/uplift/criteo_uplift_13k.csv"
+#' train <- h2o.importFile(f)
+#' train$treatment <- as.factor(train$treatment)
+#' train$conversion <- as.factor(train$conversion)
+#' 
+#' model <- h2o.upliftRandomForest(training_frame=train, x=sprintf("f%s",seq(0:10)), y="conversion",
+#'                                 ntrees=10, max_depth=5, treatment_column="treatment",
+#'                                 auuc_type="AUTO")
+#' perf <- h2o.performance(model, train=TRUE) 
+#' h2o.ate(perf)
+#' }
+#' @export
+h2o.ate <- function(object, train=FALSE, valid=FALSE) {
+    if( is(object, "H2OModelMetrics") ) return( object@metrics$ate )
+    if( is(object, "H2OModel") ) {
+        model.parts <- .model.parts(object)
+        if ( !train && !valid ) {
+            metric <- model.parts$tm@metrics$ate
+            if ( !is.null(metric) ) return(metric)
+        }
+        v <- c()
+        v_names <- c()
+        if ( train ) {
+            v <- c(v,model.parts$tm@metrics$ate)
+            v_names <- c(v_names,"train")
+        }
+        if ( valid ) {
+            if( is.null(model.parts$vm) ) return(invisible(.warn.no.validation()))
+            else {
+                v <- c(v,model.parts$vm@metrics$ate)
+                v_names <- c(v_names,"valid")
+            }
+        }
+        if ( !is.null(v) ) {
+            names(v) <- v_names
+            if ( length(v)==1 ) { return( v[[1]] ) } else { return( v ) }
+        }
+    }
+    warning(paste0("No ATE value for ", class(object)))
+    invisible(NULL)
+}
+
+#' Retrieve Average Treatment Effect on the Treated
+#'
+#' Retrieves ATE from an \linkS4class{H2OBinomialUpliftMetrics}.
+#' If "train" and "valid" parameters are FALSE (default), then the training ATT is returned. If more
+#' than one parameter is set to TRUE, then a named vector of ATT values are returned, where the names are "train", "valid".
+#'
+#' @param object An \linkS4class{H2OBinomialUpliftMetrics} or 
+#' @param train Retrieve the training ATT value
+#' @param valid Retrieve the validation ATT value
+#' @examples
+#' \dontrun{
+#' library(h2o)
+#' h2o.init()
+#' f <- "https://s3.amazonaws.com/h2o-public-test-data/smalldata/uplift/criteo_uplift_13k.csv"
+#' train <- h2o.importFile(f)
+#' train$treatment <- as.factor(train$treatment)
+#' train$conversion <- as.factor(train$conversion)
+#' 
+#' model <- h2o.upliftRandomForest(training_frame=train, x=sprintf("f%s",seq(0:10)), y="conversion",
+#'                                 ntrees=10, max_depth=5, treatment_column="treatment",
+#'                                 auuc_type="AUTO")
+#' perf <- h2o.performance(model, train=TRUE) 
+#' h2o.att(perf)
+#' }
+#' @export
+h2o.att <- function(object, train=FALSE, valid=FALSE) {
+    if( is(object, "H2OModelMetrics") ) return( object@metrics$att )
+    if( is(object, "H2OModel") ) {
+        model.parts <- .model.parts(object)
+        if ( !train && !valid ) {
+            metric <- model.parts$tm@metrics$att
+            if ( !is.null(metric) ) return(metric)
+        }
+        v <- c()
+        v_names <- c()
+        if ( train ) {
+            v <- c(v,model.parts$tm@metrics$att)
+            v_names <- c(v_names,"train")
+        }
+        if ( valid ) {
+            if( is.null(model.parts$vm) ) return(invisible(.warn.no.validation()))
+            else {
+                v <- c(v,model.parts$vm@metrics$att)
+                v_names <- c(v_names,"valid")
+            }
+        }
+        if ( !is.null(v) ) {
+            names(v) <- v_names
+            if ( length(v)==1 ) { return( v[[1]] ) } else { return( v ) }
+        }
+    }
+    warning(paste0("No ATT value for ", class(object)))
+    invisible(NULL)
+}
+
+#' Retrieve Average Treatment Effect on the Control
+#'
+#' Retrieves ATC from an \linkS4class{H2OBinomialUpliftMetrics}.
+#' If "train" and "valid" parameters are FALSE (default), then the training ATC is returned. If more
+#' than one parameter is set to TRUE, then a named vector of ATC values are returned, where the names are "train", "valid".
+#'
+#' @param object An \linkS4class{H2OBinomialUpliftMetrics} or 
+#' @param train Retrieve the training ATC value
+#' @param valid Retrieve the validation ATC value
+#' @examples
+#' \dontrun{
+#' library(h2o)
+#' h2o.init()
+#' f <- "https://s3.amazonaws.com/h2o-public-test-data/smalldata/uplift/criteo_uplift_13k.csv"
+#' train <- h2o.importFile(f)
+#' train$treatment <- as.factor(train$treatment)
+#' train$conversion <- as.factor(train$conversion)
+#' 
+#' model <- h2o.upliftRandomForest(training_frame=train, x=sprintf("f%s",seq(0:10)), y="conversion",
+#'                                 ntrees=10, max_depth=5, treatment_column="treatment",
+#'                                 auuc_type="AUTO")
+#' perf <- h2o.performance(model, train=TRUE) 
+#' h2o.atc(perf)
+#' }
+#' @export
+h2o.atc <- function(object, train=FALSE, valid=FALSE) {
+    if( is(object, "H2OModelMetrics") ) return( object@metrics$atc )
+    if( is(object, "H2OModel") ) {
+        model.parts <- .model.parts(object)
+        if ( !train && !valid ) {
+            metric <- model.parts$tm@metrics$atc
+            if ( !is.null(metric) ) return(metric)
+        }
+        v <- c()
+        v_names <- c()
+        if ( train ) {
+            v <- c(v,model.parts$tm@metrics$atc)
+            v_names <- c(v_names,"train")
+        }
+        if ( valid ) {
+            if( is.null(model.parts$vm) ) return(invisible(.warn.no.validation()))
+            else {
+                v <- c(v,model.parts$vm@metrics$atc)
+                v_names <- c(v_names,"valid")
+            }
+        }
+        if ( !is.null(v) ) {
+            names(v) <- v_names
+            if ( length(v)==1 ) { return( v[[1]] ) } else { return( v ) }
+        }
+    }
+    warning(paste0("No ATC value for ", class(object)))
+    invisible(NULL)
+}
+
+#' Retrieve normalized AUUC
+#'
+#' Retrieves the AUUC value from an \linkS4class{H2OBinomialUpliftMetrics}. If the metric parameter is "AUTO", 
+#' the type of AUUC depends on auuc_type which was set before training. If you need specific normalized AUUC, 
+#' set metric parameter. If "train" and "valid" parameters are FALSE (default), then the training normalized AUUC 
+#' value is returned. If more than one parameter is set to TRUE, then a named vector of normalized AUUCs are returned, 
+#' where the names are "train", "valid".
+#'
+#' @param object An \linkS4class{H2OBinomialUpliftMetrics}
+#' @param train Retrieve the training AUUC
+#' @param valid Retrieve the validation AUUC
+#' @param metric Specify the AUUC metric to get specific AUUC. Possibilities are NULL, "qini", "lift", "gain".
+#' @examples
+#' \dontrun{
+#' library(h2o)
+#' h2o.init()
+#' f <- "https://s3.amazonaws.com/h2o-public-test-data/smalldata/uplift/criteo_uplift_13k.csv"
+#' train <- h2o.importFile(f)
+#' train$treatment <- as.factor(train$treatment)
+#' train$conversion <- as.factor(train$conversion)
+#' 
+#' model <- h2o.upliftRandomForest(training_frame=train, x=sprintf("f%s",seq(0:10)), y="conversion",
+#'                                 ntrees=10, max_depth=5, treatment_column="treatment", 
+#'                                 auuc_type="AUTO")
+#' perf <- h2o.performance(model, train=TRUE) 
+#' h2o.auuc_normalized(perf)
+#' }
+#' @export
+h2o.auuc_normalized <- function(object, train=FALSE, valid=FALSE, metric=NULL) {
+    if(!is.null(metric) && !metric %in% c("qini", "lift", "gain"))
+        stop("metric must be NULL, 'qini', 'lift' or 'gain'")
+    if( is(object, "H2OModelMetrics") ) {
+        if(is.null(metric)) {
+            return( object@metrics$auuc_normalized )
+        } else {
+            return( eval(parse(text=paste("object@metrics$auuc_table$", metric,"[2]", sep=""))))
+        }
+    }
+    if( is(object, "H2OModel") ) {
+        model.parts <- .model.parts(object)
+        if ( !train && !valid ) {
+            if (is.null(metric)) {
+                mm <- model.parts$tm@metrics$AUUC
+            } else {
+                mm <- eval(parse(text=paste("model.parts$tm@metrics$auuc_table$", metric,"[2]", sep="")))
+            }
+            if ( !is.null(mm) ) return(mm)
+        }
+        v <- c()
+        v_names <- c()
+        if ( train ) {
+            if (is.null(metric)) {
+                mm <- model.parts$tm@metrics$AUUC
+            } else {
+                mm <- eval(parse(text=paste("model.parts$tm@metrics$auuc_table$", metric,"[2]", sep="")))
+            }
+            v <- c(v, mm)
+            v_names <- c(v_names,"train")
+        }
+        if ( valid ) {
+            if( is.null(model.parts$vm) ) return(invisible(.warn.no.validation()))
+            else {
+                if (is.null(metric)) {
+                    mm <- model.parts$vm@metrics$AUUC
+                } else {
+                    mm <- eval(parse(text=paste("model.parts$vm@metrics$auuc_table$", metric,"[2]", sep="")))
+                }
+                v <- c(v, mm)
+                v_names <- c(v_names,"valid")
+            }
+        }
+        if ( !is.null(v) ) {
+            names(v) <- v_names
+            if ( length(v)==1 ) { return( v[[1]] ) } else { return( v ) }
+        }
+    }
+    warning(paste0("No AUUC normalized for ", class(object)))
+    invisible(NULL)
+}
+
 #' Retrieve the all types of AUUC in a table
 #'
 #' Retrieves the all types of AUUC in a table from an \linkS4class{H2OBinomialUpliftMetrics}.
-#' If "train" and "valid" parameters are FALSE (default), then the training AUUC values is returned. If more
+#' If "train" and "valid" parameters are FALSE (default), then the training AUUC values are returned. If more
 #' than one parameter is set to TRUE, then a named vector of AUUCs are returned, where the names are "train", "valid".
 #'
 #' @param object An \linkS4class{H2OBinomialUpliftMetrics}
@@ -1305,14 +1783,18 @@ h2o.auuc_table <- function(object, train=FALSE, valid=FALSE) {
 
 #' Retrieve the thresholds and metric scores table
 #'
-#' Retrieves the thresholds and metric scores table from an \linkS4class{H2OBinomialUpliftMetrics}.
-#' The table contains indices, thresholds, all cumulative uplift values and cumulative number of observations.
+#' Retrieves the thresholds and metric scores table from a \linkS4class{H2OBinomialUpliftMetrics} 
+#' or a \linkS4class{H2OBinomialMetrics}.
+#' 
+#' The table contains indices, thresholds, all cumulative uplift values and cumulative number of observations for 
+#' uplift binomial models or thresholds and maximal metric values for binomial models. 
 #' If "train" and "valid" parameters are FALSE (default), then the training table is returned. If more
 #' than one parameter is set to TRUE, then a named vector of tables is returned, where the names are "train", "valid".
 #'
-#' @param object An \linkS4class{H2OBinomialUpliftMetrics}
+#' @param object A \linkS4class{H2OBinomialUpliftMetrics} or a \linkS4class{H2OBinomialMetrics}
 #' @param train Retrieve the training thresholds and metric scores table
 #' @param valid Retrieve the validation thresholds and metric scores table
+#' @param xval Retrieve the cross-validation thresholds and metric scores table (only for \linkS4class{H2OBinomialMetrics})
 #' @examples
 #' \dontrun{
 #' library(h2o)
@@ -1323,17 +1805,17 @@ h2o.auuc_table <- function(object, train=FALSE, valid=FALSE) {
 #' train$conversion <- as.factor(train$conversion)
 #' 
 #' model <- h2o.upliftRandomForest(training_frame=train, x=sprintf("f%s",seq(0:10)), y="conversion",
-#'                                        ntrees=10, max_depth=5, treatment_column="treatment", 
-#'                                        auuc_type="AUTO")
+#'                                 ntrees=10, max_depth=5, treatment_column="treatment", 
+#'                                 auuc_type="AUTO")
 #' perf <- h2o.performance(model, train=TRUE) 
 #' h2o.thresholds_and_metric_scores(perf)
 #' }
 #' @export
-h2o.thresholds_and_metric_scores <- function(object, train=FALSE, valid=FALSE) {
+h2o.thresholds_and_metric_scores <- function(object, train=FALSE, valid=FALSE, xval=FALSE) {
     if( is(object, "H2OModelMetrics") ) return( object@metrics$thresholds_and_metric_score)
     if( is(object, "H2OModel") ) {
         model.parts <- .model.parts(object)
-        if ( !train && !valid ) {
+        if ( !train && !valid && !xval) {
             metric <- model.parts$tm@metrics$thresholds_and_metric_score
             if ( !is.null(metric) ) return(metric)
         }
@@ -1350,12 +1832,191 @@ h2o.thresholds_and_metric_scores <- function(object, train=FALSE, valid=FALSE) {
                 v_names <- c(v_names,"valid")
             }
         }
+        if ( xval ) {
+            if( is.null(model.parts$xval) ) return(invisible(.warn.no.cross.validation()))
+            else {
+                v <- c(v,model.parts$xm@metrics$thresholds_and_metric_score)
+                v_names <- c(v_names,"xval")
+            }
+        }
         if ( !is.null(v) ) {
             names(v) <- v_names
             if ( length(v)==1 ) { return( v[[1]] ) } else { return( v ) }
         }
     }
     warning(paste0("No thresholds_and_metric_score table for ", class(object)))
+    invisible(NULL)
+}
+
+#' Retrieve the default Qini value
+#'
+#' Retrieves the Qini value from an \linkS4class{H2OBinomialUpliftMetrics}.
+#' If "train" and "valid" parameters are FALSE (default), then the training Qini value is returned. If more
+#' than one parameter is set to TRUE, then a named vector of Qini values are returned, where the names are "train", "valid".
+#'
+#' @param object An \linkS4class{H2OBinomialUpliftMetrics} or 
+#' @param train Retrieve the training Qini value
+#' @param valid Retrieve the validation Qini
+#' @examples
+#' \dontrun{
+#' library(h2o)
+#' h2o.init()
+#' f <- "https://s3.amazonaws.com/h2o-public-test-data/smalldata/uplift/criteo_uplift_13k.csv"
+#' train <- h2o.importFile(f)
+#' train$treatment <- as.factor(train$treatment)
+#' train$conversion <- as.factor(train$conversion)
+#' 
+#' model <- h2o.upliftRandomForest(training_frame=train, x=sprintf("f%s",seq(0:10)), y="conversion",
+#'                                 ntrees=10, max_depth=5, treatment_column="treatment",
+#'                                 auuc_type="AUTO")
+#' perf <- h2o.performance(model, train=TRUE) 
+#' h2o.qini(perf)
+#' }
+#' @export
+h2o.qini <- function(object, train=FALSE, valid=FALSE) {
+    if( is(object, "H2OModelMetrics") ) return( object@metrics$qini )
+    if( is(object, "H2OModel") ) {
+        model.parts <- .model.parts(object)
+        if ( !train && !valid ) {
+            metric <- model.parts$tm@metrics$qini
+            if ( !is.null(metric) ) return(metric)
+        }
+        v <- c()
+        v_names <- c()
+        if ( train ) {
+            v <- c(v,model.parts$tm@metrics$qini)
+            v_names <- c(v_names,"train")
+        }
+        if ( valid ) {
+            if( is.null(model.parts$vm) ) return(invisible(.warn.no.validation()))
+            else {
+                v <- c(v,model.parts$vm@metrics$qini)
+                v_names <- c(v_names,"valid")
+            }
+        }
+        if ( !is.null(v) ) {
+            names(v) <- v_names
+            if ( length(v)==1 ) { return( v[[1]] ) } else { return( v ) }
+        }
+    }
+    warning(paste0("No Qini value for ", class(object)))
+    invisible(NULL)
+}
+
+#' Retrieve the default AECU (Average Excess Cumulative Uplift = area between AUUC and random AUUC)
+#'
+#' Retrieves the AECU value from an \linkS4class{H2OBinomialUpliftMetrics}. You need to specificy the type of AECU
+#' using metric parameter. Defaults "qini". Qini AECU equals the Qini value.
+#' If "train" and "valid" parameters are FALSE (default), then the training AECU value is returned. If more
+#' than one parameter is set to TRUE, then a named vector of AECUs are returned, where the names are "train", "valid".
+#'
+#' @param object An \linkS4class{H2OBinomialUpliftMetrics}
+#' @param train Retrieve the training AECU
+#' @param valid Retrieve the validation AECU
+#' @param metric Specify metric of AECU. Posibilities are "qini", "lift", "gain", defaults "qini".
+#' @examples
+#' \dontrun{
+#' library(h2o)
+#' h2o.init()
+#' f <- "https://s3.amazonaws.com/h2o-public-test-data/smalldata/uplift/criteo_uplift_13k.csv"
+#' train <- h2o.importFile(f)
+#' train$treatment <- as.factor(train$treatment)
+#' train$conversion <- as.factor(train$conversion)
+#' 
+#' model <- h2o.upliftRandomForest(training_frame=train, x=sprintf("f%s",seq(0:10)), y="conversion",
+#'                                 ntrees=10, max_depth=5, treatment_column="treatment",
+#'                                 auuc_type="AUTO")
+#' perf <- h2o.performance(model, train=TRUE) 
+#' h2o.aecu(perf)
+#' }
+#' @export
+h2o.aecu <- function(object, train=FALSE, valid=FALSE, metric="qini") {
+    if(!metric %in% c("qini", "lift", "gain")) stop("metric must be 'qini', 'lift' or 'gain'")
+    if( is(object, "H2OModelMetrics") ) {
+        return( eval(parse(text=paste("object@metrics$aecu_table$", metric,"[1]", sep=""))))
+    }
+    if( is(object, "H2OModel") ) {
+        model.parts <- .model.parts(object)
+        if ( !train && !valid ) {
+            mm <- eval(parse(text=paste("model.parts$tm@metrics$aecu_table$", metric,"[1]", sep="")))
+            if ( !is.null(mm) ) return(mm)
+        }
+        v <- c()
+        v_names <- c()
+        if ( train ) {
+            mm <- eval(parse(text=paste("model.parts$tm@metrics$aecu_table$", metric,"[1]", sep="")))
+            v <- c(v, mm)
+            v_names <- c(v_names,"train")
+        }
+        if ( valid ) {
+            if( is.null(model.parts$vm) ) return(invisible(.warn.no.validation()))
+            else {
+                mm <- eval(parse(text=paste("model.parts$vm@metrics$auuc_table$", metric,"[1]", sep="")))
+                v <- c(v, mm)
+                v_names <- c(v_names,"valid")
+            }
+        }
+        if ( !is.null(v) ) {
+            names(v) <- v_names
+            if ( length(v)==1 ) { return( v[[1]] ) } else { return( v ) }
+        }
+    }
+    warning(paste0("No AECU for ", class(object)))
+    invisible(NULL)
+}
+
+#' Retrieve the all types of AECU (average excess cumulative uplift) value in a table
+#'
+#' Retrieves the all types of AECU value in a table from an \linkS4class{H2OBinomialUpliftMetrics}.
+#' If "train" and "valid" parameters are FALSE (default), then the training AECU values are returned. If more
+#' than one parameter is set to TRUE, then a named vector of AECU values are returned, where the names are "train", "valid".
+#'
+#' @param object An \linkS4class{H2OBinomialUpliftMetrics}
+#' @param train Retrieve the training AECU values table
+#' @param valid Retrieve the validation AECU values table
+#' @examples
+#' \dontrun{
+#' library(h2o)
+#' h2o.init()
+#' f <- "https://s3.amazonaws.com/h2o-public-test-data/smalldata/uplift/criteo_uplift_13k.csv"
+#' train <- h2o.importFile(f)
+#' train$treatment <- as.factor(train$treatment)
+#' train$conversion <- as.factor(train$conversion)
+#' 
+#' model <- h2o.upliftRandomForest(training_frame=train, x=sprintf("f%s",seq(0:10)), y="conversion",
+#'                                 ntrees=10, max_depth=5, treatment_column="treatment",
+#'                                 auuc_type="AUTO")
+#' perf <- h2o.performance(model, train=TRUE) 
+#' h2o.aecu_table(perf)
+#' }
+#' @export
+h2o.aecu_table <- function(object, train=FALSE, valid=FALSE) {
+    if( is(object, "H2OModelMetrics") ) return( object@metrics$aecu_table )
+    if( is(object, "H2OModel") ) {
+        model.parts <- .model.parts(object)
+        if ( !train && !valid ) {
+            metric <- model.parts$tm@metrics$aecu_table
+            if ( !is.null(metric) ) return(metric)
+        }
+        v <- c()
+        v_names <- c()
+        if ( train ) {
+            v <- c(v,model.parts$tm@metrics$aecu_table)
+            v_names <- c(v_names,"train")
+        }
+        if ( valid ) {
+            if( is.null(model.parts$vm) ) return(invisible(.warn.no.validation()))
+            else {
+                v <- c(v,model.parts$vm@metrics$aecu_table)
+                v_names <- c(v_names,"valid")
+            }
+        }
+        if ( !is.null(v) ) {
+            names(v) <- v_names
+            if ( length(v)==1 ) { return( v[[1]] ) } else { return( v ) }
+        }
+    }
+    warning(paste0("No AECU table for ", class(object)))
     invisible(NULL)
 }
 
@@ -1368,6 +2029,7 @@ h2o.thresholds_and_metric_scores <- function(object, train=FALSE, valid=FALSE) {
 #' 
 #' @param probs An \linkS4class{H2OFrame} holding vector of probabilities.
 #' @param acts An \linkS4class{H2OFrame} holding vector of actuals.
+#' @noRd
 .h2o.perfect_auc <- function(probs, acts) {
   .newExpr("perfectAUC", probs, acts)[1, 1]
 }
@@ -1673,6 +2335,12 @@ h2o.mean_per_class_error <- function(object, train=FALSE, valid=FALSE, xval=FALS
 h2o.aic <- function(object, train=FALSE, valid=FALSE, xval=FALSE) {
   if( is(object, "H2OModelMetrics") ) return( object@metrics$AIC )
   if( is(object, "H2OModel") ) {
+      if (('calc_like' %in% names(object@allparameters)) && !object@allparameters$calc_like) {
+        warning_message <- paste0("This is the AIC function using the simplified negative log likelihood used during ",
+                                  "training for speedup. To see the correct value, set calc_like=True, ",
+                                  "retrain and call h2o.aic(model).")
+        warning(warning_message)
+      }
     model.parts <- .model.parts(object)
     if ( !train && !valid && !xval ) {
       metric <- model.parts$tm@metrics$AIC
@@ -1707,11 +2375,74 @@ h2o.aic <- function(object, train=FALSE, valid=FALSE, xval=FALSE) {
   invisible(NULL)
 }
 
+
+#'
+#' Retrieve the log likelihood value
+#'
+#' Retrieves the log likelihood value.
+#' If "train", "valid", and "xval" parameters are FALSE (default), then the training log likelihood value is returned. If more
+#' than one parameter is set to TRUE, then a named vector of log likelihoods is returned, where the names are "train", "valid"
+#' or "xval".
+#'
+#' @param object An \linkS4class{H2OModel} or \linkS4class{H2OModelMetrics}.
+#' @param train Retrieve the training log likelihood
+#' @param valid Retrieve the validation log likelihood
+#' @param xval Retrieve the cross-validation log likelihood
+#' @examples
+#' \dontrun{
+#' library(h2o)
+#' h2o.init()
+#' prostate_path <- system.file("extdata", "prostate.csv", package = "h2o")
+#' prostate <- h2o.uploadFile(path = prostate_path)
+#' p_sid <- h2o.runif(prostate)
+#' prostate_train <- prostate[p_sid > .2,]
+#' prostate_glm <- h2o.glm(x = 3:7, y = 2, training_frame = prostate_train)
+#' ll_basic <- h2o.loglikelihood(prostate_glm)
+#' print(ll_basic)
+#' }
+#' @export
+h2o.loglikelihood <- function(object, train=FALSE, valid=FALSE, xval=FALSE) {
+    if( is(object, "H2OModelMetrics") ) return( object@metrics$loglikelihood )
+    if( is(object, "H2OModel") ) {
+        model.parts <- .model.parts(object)
+        if ( !train && !valid && !xval ) {
+            metric <- model.parts$tm@metrics$loglikelihood
+            if ( !is.null(metric) ) return(metric)
+        }
+        v <- c()
+        v_names <- c()
+        if ( train ) {
+            v <- c(v,model.parts$tm@metrics$loglikelihood)
+            v_names <- c(v_names,"train")
+        }
+        if ( valid ) {
+            if( is.null(model.parts$vm) ) return(invisible(.warn.no.validation()))
+            else {
+                v <- c(v,model.parts$vm@metrics$loglikelihood)
+                v_names <- c(v_names,"valid")
+            }
+        }
+        if ( xval ) {
+            if( is.null(model.parts$xm) ) return(invisible(.warn.no.cross.validation()))
+            else {
+                v <- c(v,model.parts$xm@metrics$loglikelihood)
+                v_names <- c(v_names,"xval")
+            }
+        }
+        if ( !is.null(v) ) {
+            names(v) <- v_names
+            if ( length(v)==1 ) { return( v[[1]] ) } else { return( v ) }
+        }
+    }
+    warning(paste0("No loglikelihood for ", class(object)))
+    invisible(NULL)
+}
+
 #'
 #' Retrieve the R2 value
 #'
 #' Retrieves the R2 value from an H2O model.
-#' Will return R^2 for GLM Models and will return NaN otherwise.
+#' Will return R^2 for GLM Models.
 #' If "train", "valid", and "xval" parameters are FALSE (default), then the training R2 value is returned. If more
 #' than one parameter is set to TRUE, then a named vector of R2s are returned, where the names are "train", "valid"
 #' or "xval".
@@ -1830,19 +2561,6 @@ h2o.mean_residual_deviance <- function(object, train=FALSE, valid=FALSE, xval=FA
   invisible(NULL)
 }
 
-#' Retrieve HGLM ModelMetrics
-#'
-#' @param object an H2OModel object or H2OModelMetrics.
-#' @export
-h2o.HGLMMetrics <- function(object) {
-    if( is(object, "H2OModel") ) {
-        model.parts <- .model.parts(object)
-        return(model.parts$tm@metrics)
-    }
-    warning(paste0("No HGLM Metric for ",class(object)))
-    invisible(NULL)
-}
-
 #' Retrieve the GINI Coefficcient
 #'
 #' Retrieves the GINI coefficient from an \linkS4class{H2OBinomialMetrics}.
@@ -1910,6 +2628,167 @@ h2o.giniCoef <- function(object, train=FALSE, valid=FALSE, xval=FALSE) {
 }
 
 #'
+#' Return the coefficients table with coefficients, standardized coefficients, p-values, z-values and std-error for GLM models
+#'
+#' @param object An \linkS4class{H2OModel} object.
+#' @examples 
+#' \dontrun{
+#' library(h2o)
+#' h2o.init()
+#' 
+#' f <- "https://s3.amazonaws.com/h2o-public-test-data/smalldata/junit/cars_20mpg.csv"
+#' cars <- h2o.importFile(f)
+#' predictors <- c("displacement", "power", "weight", "acceleration", "year")
+#' response <- "cylinders"
+#' cars_split <- h2o.splitFrame(data = cars, ratios = 0.8, seed = 1234)
+#' train <- cars_split[[1]]
+#' valid <- cars_split[[2]]
+#' cars_glm <- h2o.glm(seed = 1234, 
+#'                     lambda=0.0,
+#'                     compute_p_values=TRUE,
+#'                     x = predictors, 
+#'                     y = response, 
+#'                     training_frame = train, 
+#'                     validation_frame = valid)
+#' h2o.coef_with_p_values(cars_glm)
+#' }
+#' @export
+h2o.coef_with_p_values <- function(object) {
+  if (is(object, "H2OModel") && object@algorithm %in% c("glm")) {
+    if (object@parameters$compute_p_values) {
+      object@model$coefficients_table
+    } else {
+      stop("p-values, z-values and std_error are not found in model.  Make sure to set compute_p_values=TRUE.")
+    }
+  } else {
+    stop("p-values, z-values and std_error are only found in GLM.")
+  }
+}
+
+#'
+#' Return the GLM linear constraints descriptions, constraints values, constraints bounds and whether the constraints
+#' satisfied the bounds (true) or not (false)
+#'
+#' @param object An \linkS4class{H2OModel} object.
+#' @examples 
+#' \dontrun{
+#' library(h2o)
+#' h2o.init()
+#' 
+#' f <- "https://s3.amazonaws.com/h2o-public-test-data/smalldata/junit/cars_20mpg.csv"
+#' cars <- h2o.importFile(f)
+#' predictors <- c("displacement", "power", "weight", "acceleration", "year")
+#' response <- "acceleration"
+#' colnames <- c("power", "weight", "constant")
+#' values <- c(0.5, 1.0, 100)
+#' types <- c("lessthanequal", "lessthanequal", "lessthanequal")
+#' numbers <- c(0, 0, 0)
+#' con <- data.frame(names=colnames, values=values, types=types, constraint_numbers=numbers)
+#' cars_model <- h2o.glm(y=response, solver="irlsm",
+#'                                  x=predictors, 
+#'                                  training_frame = cars,
+#'                                  linear_constraints=as.h2o(con),
+#'                                  lambda=0.0,
+#'                                  family="gaussian")
+#' print(h2o.get_constraints_info(cars_model))
+#' }
+#' @export
+h2o.get_constraints_info <- function(object) {
+    if (is(object, "H2OModel") && object@algorithm %in% c("glm")) {
+        if (is.null(object@parameters$linear_constraints)) {
+            stop("GLM linear constraints information is only available where there are linear constraints specified
+            in the parameter linear_constraints!")
+        } else {
+            object@model$linear_constraints_table
+        }
+    } else {
+        stop("get_constraints_info is only available for GLM models with linear constraints specified in the parameter
+         linear_constraints!.")
+    }
+}
+
+#'
+#' Return the TRUE if all constraints are satisfied for a constraint GLM model and FALSE otherwise.  If you want to 
+#' check which constraint failed, use h2o.get_constraints_info method.
+#'
+#' @param object An \linkS4class{H2OModel} object.
+#' @examples 
+#' \dontrun{
+#' library(h2o)
+#' h2o.init()
+#' 
+#' f <- "https://s3.amazonaws.com/h2o-public-test-data/smalldata/junit/cars_20mpg.csv"
+#' cars <- h2o.importFile(f)
+#' predictors <- c("displacement", "power", "weight", "acceleration", "year")
+#' response <- "acceleration"
+#' colnames <- c("power", "weight", "constant")
+#' values <- c(0.5, 1.0, 100)
+#' types <- c("lessthanequal", "lessthanequal", "lessthanequal")
+#' numbers <- c(0, 0, 0)
+#' con <- data.frame(names=colnames, values=values, types=types, constraint_numbers=numbers)
+#' cars_model <- h2o.glm(y=response, solver="irlsm",
+#'                                  x=predictors, 
+#'                                  training_frame = cars,
+#'                                  linear_constraints=as.h2o(con),
+#'                                  lambda=0.0,
+#'                                  family="gaussian")
+#' print(h2o.all_constraints_passed(cars_model))
+#' }
+#' @export
+h2o.all_constraints_passed <- function(object) {
+    if (is(object, "H2OModel") && object@algorithm %in% c("glm")) {
+        if (is.null(object@parameters$linear_constraints)) {
+            stop("h2o.all_constraints_passed is only available where there are linear constraints specified
+            in the parameter linear_constraints!")
+        } else {
+            object@model$all_constraints_satisfied
+        }
+    } else {
+        stop("h2o.all_constraints_passed is only available for GLM models with linear constraints specified in the
+         parameter linear_constraints!.")
+    }
+}
+
+#'
+#' Return the variable inflation factors associated with numerical predictors for GLM models.
+#'
+#' @param object An \linkS4class{H2OModel} object.
+#' @examples 
+#' \dontrun{
+#' library(h2o)
+#' h2o.init()
+#' 
+#' f <- "https://s3.amazonaws.com/h2o-public-test-data/smalldata/junit/cars_20mpg.csv"
+#' cars <- h2o.importFile(f)
+#' predictors <- c("displacement", "power", "weight", "acceleration", "year")
+#' response <- "cylinders"
+#' cars_split <- h2o.splitFrame(data = cars, ratios = 0.8, seed = 1234)
+#' train <- cars_split[[1]]
+#' valid <- cars_split[[2]]
+#' cars_glm <- h2o.glm(seed = 1234, 
+#'                     lambda=0.0,
+#'                     compute_p_values=TRUE,
+#'                     generate_variable_inflation_factors=TRUE,     
+#'                     x = predictors, 
+#'                     y = response, 
+#'                     training_frame = train, 
+#'                     validation_frame = valid)
+#' h2o.get_variable_inflation_factors(cars_glm)
+#' }
+#' @export
+h2o.get_variable_inflation_factors <- function(object) {
+  if (is(object, "H2OModel") && object@algorithm %in% c("glm")) {
+    if (object@parameters$generate_variable_inflation_factors) {
+      structure(object@model$variable_inflation_factors, names = object@model$vif_predictor_names)
+    } else {
+      stop("variable inflation factors are not found in model.  Make sure to set enable_variable_inflation_factors=TRUE.")
+    }
+  } else {
+    stop("variable inflation factors are only found in GLM models with numerical predictors.")
+  }
+}
+
+#'
 #' Return the coefficients that can be applied to the non-standardized data.
 #'
 #' Note: standardize = True by default. If set to False, then coef() returns the coefficients that are fit directly.
@@ -1939,34 +2818,71 @@ h2o.giniCoef <- function(object, train=FALSE, valid=FALSE, xval=FALSE) {
 #' h2o.coef(cars_glm)
 #' }
 #' @export
-h2o.coef <- function(object, predictorSize=-1) {
-  if (is(object, "H2OModel") && object@algorithm %in% c("glm", "gam", "coxph", "maxrglm")) {
-    if ((object@algorithm == "glm" || object@algorithm == "gam") && (object@allparameters$family %in% c("multinomial", "ordinal"))) {
-        grabCoeff(object@model$coefficients_table, "coefs_class", FALSE)
+h2o.coef <- function(object, predictorSize = -1) {
+  if (is(object, "H2OModel") &&
+      object@algorithm %in% c("glm", "gam", "coxph", "modelselection", "hglm")) {
+    if ((object@algorithm == "glm" ||
+         object@algorithm == "gam") &&
+        (object@allparameters$family %in% c("multinomial", "ordinal"))) {
+      grabCoeff(object@model$coefficients_table, "coefs_class", FALSE)
     } else {
-      if (object@algorithm == "maxrglm") {
-        modelIDs <- object@model$best_model_ids
-        numModels = length(modelIDs)
-        if (predictorSize == 0)
-          stop("predictorSize (predictor subset size) must be between 0 and the total number of predictors used.")
-        if (predictorSize > numModels)
-          stop("predictorSize (predictor subset size) cannot exceed the total number of predictors used.")
-        if (predictorSize > 0) { # subset size was specified
-          return(grabOneModelCoef(modelIDs, predictorSize, FALSE))
-        } else {
-        coeffs <- vector("list", numModels)
-        for (index in seq(numModels)) {
-          coeffs[[index]] <- grabOneModelCoef(modelIDs, index, FALSE)
-        }
-        return(coeffs)
+      if (object@algorithm == "modelselection") {
+        if (object@allparameters$mode == "maxrsweep" &&
+            !object@allparameters$build_glm_model) {
+          numModels <- length(object@model$best_r2_values)
+          maxPredNumbers <- object@parameters$max_predictor_number
+          stopifnot(
+            "predictorSize (predictor subset size) must be between 0 and the total number of predictors used." = predictorSize != 0,
+            "predictorSize (predictor subset size) cannot exceed the total number of predictors used." = predictorSize <= maxPredNumbers
+          )
+          if (predictorSize < 0) {
+            coeffs <- vector("list", numModels)
+            for (index in seq(numModels)) {
+              coeffs[[index]] <- structure(object@model$coefficient_values[[index]], names=object@model$coefficient_names[[index]])
+            }
+            return(coeffs)
+          } else {
+            return(structure(object@model$coefficient_values[[predictorSize]], names=object@model$coefficient_names[[predictorSize]]))    
           }
+        } else {
+          modelIDs <- object@model$best_model_ids
+          numModels <- length(modelIDs)
+          mode <- object@parameters$mode
+          maxPredNumbers <- numModels
+          if (mode == "backward")
+            maxPredNumbers <- length(object@model$best_predictors_subset[[numModels]])
+          stopifnot(
+            "predictorSize (predictor subset size) must be between 0 and the total number of predictors used." = predictorSize != 0,
+            "predictorSize (predictor subset size) cannot exceed the total number of predictors used." = predictorSize <= maxPredNumbers
+            )
+          if (predictorSize > 0) {
+            # subset size was specified
+            if (mode == "backward") {
+              return(grabOneModelCoef(
+                modelIDs,
+                numModels - (maxPredNumbers - predictorSize),
+                FALSE
+              ))
+            } else {
+              return(grabOneModelCoef(modelIDs, predictorSize, FALSE))
+            }
+          } else {
+            coeffs <- vector("list", numModels)
+            for (index in seq(numModels)) {
+              coeffs[[index]] <- grabOneModelCoef(modelIDs, index, FALSE)
+            }
+            return(coeffs)
+          }
+        }
       } else {
-        structure(object@model$coefficients_table$coefficients,
-                names = object@model$coefficients_table$names)
+        structure(
+          object@model$coefficients_table$coefficients,
+          names = object@model$coefficients_table$names
+        )
       }
     }
   } else {
-    stop("Can only extract coefficients from GAM, GLM and CoxPH models")
+    stop("Can only extract coefficients from GAM, GLM, HGLM and CoxPH models")
   }
 }
 
@@ -1977,6 +2893,188 @@ grabOneModelCoef <- function(modelIDs, index, standardized) {
   } else {
       return(h2o.coef(oneModel))
   }
+}
+
+#'
+#' Extracts a list of H2OFrames containing regression influence diagnostics for predictor subsets of various sizes or
+#' just one H2OFrame containing regression influence diagnostics for predictor subsets of one fixed size
+#'
+#' @param model an \linkS4class{H2OModel} object.
+#' @param predictorSize predictor subset size.  If specified, will only return model coefficients of that subset size.  If
+#'          not specified will return a lists of model coefficient dicts for all predictor subset size.
+#' @examples 
+#' \dontrun{
+#' library(h2o)
+#' h2o.init()
+#' 
+#' f <- "https://s3.amazonaws.com/h2o-public-test-data/smalldata/junit/cars_20mpg.csv"
+#' cars <- h2o.importFile(f)
+#' predictors <- c("displacement", "power", "weight", "acceleration", "year")
+#' response <- "acceleration"
+#' cars_model <- h2o.modelSelection(y=response, 
+#'                                  x=predictors, 
+#'                                  training_frame = cars, 
+#'                                  min_predictor_number=2, 
+#'                                  mode="backward", 
+#'                                  influence="dfbetas",
+#'                                  lambda=0.0,
+#'                                  family="gaussian")
+#' rid_frame <- h2o.get_regression_influence_diagnostics(cars_model, predictorSize=3)
+#' }
+#' @export   
+h2o.get_regression_influence_diagnostics <- function(model, predictorSize = -1) {
+    mode <- model@allparameters$mode
+    if( is(model, "H2OModel") && (model@algorithm=='modelselection')) {
+        if ((mode == 'maxrsweep') && (model@allparameters$build_glm_model==FALSE)) {
+            stop("regression influence diagnostics are only available when GLM models are built.  For mode='maxrsweep', make
+      sure build_glm_model to TRUE.")
+        } else {
+            if (model@allparameters$influence == "dfbetas") {
+                modelIDs <- model@model$best_model_ids
+                numModels <- length(modelIDs)
+                if (predictorSize < 0) {    # return a list of frames
+                    ridFrames <- vector("list", numModels)
+                    for (index in seq(numModels)) {
+                        oneModel <- h2o.getModel(modelIDs[[index]]$name)
+                        ridFrames[[index]] <- h2o.getFrame(oneModel@model$regression_influence_diagnostics$name)
+                    }
+                    return(ridFrames)
+                } else {  # only return one frame
+                    maxPredNumbers <- numModels
+                    index <- predictorSize
+                    if (mode == "backwards") {
+                        maxPredNumbers <- length(model@model$best_predictors_subset[[numModels]])
+                        index <- numModels-(maxPredNumbers-predictorSize)
+                    }
+                    oneModel <- h2o.getModel(modelIDs[[index]]$name)
+                    return(h2o.getFrame(oneModel@model$regression_influence_diagnostics$name))
+                }
+           } else {
+                stop("regression influence diagnostic is only available when infuence='dfbetas' for GLM binomial and
+                 gaussian families.")
+            }
+        }
+    } else if (is(model, "H2OModel") && (model@algorithm=="glm")) {
+        if (model@allparameters$influence == 'dfbetas') {
+            return(h2o.getFrame(model@model$regression_influence_diagnostics$name))
+        } else {
+            stop("influence needs to be set to 'dfbetas'.")
+        }
+    }
+}
+
+#'
+#' Extracts the final training negative log likelihood of a GLM model.
+#'
+#' @param model an \linkS4class{H2OModel} object.
+#' @return The final training negative log likelihood of a GLM model.
+#' 
+#' @examples 
+#' \dontrun{
+#' library(h2o)
+#' h2o.init()
+#' 
+#' f <- "https://s3.amazonaws.com/h2o-public-test-data/smalldata/junit/cars_20mpg.csv"
+#' cars <- h2o.importFile(f)
+#' predictors <- c("displacement", "power", "weight", "acceleration", "year")
+#' response <- "acceleration"
+#' cars_model <- h2o.glm(y=response, 
+#'                        x=predictors, 
+#'                        training_frame = cars, 
+#'                        family="gaussian",
+#'                        generate_scoring_history=TRUE)
+#' nllValue <- h2o.negative_log_likelihood(cars_model)
+#' }
+#' @export 
+h2o.negative_log_likelihood <- function(model) {
+    if (model@allparameters$calc_like) {
+        warning_message <- paste0("This is the simplified negative log likelihood function used during training for speedup. ", 
+                                 "To see the correct value call h2o.loglikelihood(model).")
+    } else {
+        warning_message <- paste0("This is the simplified negative log likelihood function used during training for speedup. ", 
+                                 "To see the correct value, set calc_like=True, retrain and call h2o.loglikelihood(model).")
+    }
+    warning(warning_message)
+    return(extract_scoring_history(model, "negative_log_likelihood"))
+}
+
+#'
+#' Extracts the final training average objective function of a GLM model.
+#'
+#' @param model an \linkS4class{H2OModel} object.
+#' @return The final training average objective of a GLM model.
+#' 
+#' @examples 
+#' \dontrun{
+#' library(h2o)
+#' h2o.init()
+#' 
+#' f <- "https://s3.amazonaws.com/h2o-public-test-data/smalldata/junit/cars_20mpg.csv"
+#' cars <- h2o.importFile(f)
+#' predictors <- c("displacement", "power", "weight", "acceleration", "year")
+#' response <- "acceleration"
+#' cars_model <- h2o.glm(y=response, 
+#'                        x=predictors, 
+#'                        training_frame = cars, 
+#'                        family="gaussian",
+#'                        generate_scoring_history=TRUE)
+#' objValue <- h2o.average_objective(cars_model)
+#' }
+#' @export 
+h2o.average_objective <- function(model) {
+
+    warning_message <- paste0("This objective function is calculated based on the simplified negative log likelihood ",
+                             "function used during training for speedup.")
+    warning(warning_message)
+    return(extract_scoring_history(model, "objective"))
+}
+
+extract_scoring_history <- function(model, value) {
+  if (is(model, "H2OModel") && (model@algorithm=='glm')) {
+      if (model@params$actual$generate_scoring_history) {
+          scHist <- model@model$scoring_history
+          return(scHist[nrow(scHist), value])
+      } else {
+          stop("negative_log_likelihood and average_objection functions can only be extracted when generate_scoring_history=TRUE for now.")
+      }
+  } else {
+      stop("negative_log_likelihood and average_objection functions are only available for GLM models.")
+  }
+}
+
+#'
+#' Return the GLM coefficient names without building the actual GLM model by setting max_iterations=0.
+#'
+#' @param object an \linkS4class{H2OModel} object.
+#' 
+#' @examples 
+#' \dontrun{
+#' library(h2o)
+#' h2o.init()
+#' 
+#' f <- "https://s3.amazonaws.com/h2o-public-test-data/smalldata/junit/cars_20mpg.csv"
+#' cars <- h2o.importFile(f)
+#' predictors <- c("displacement", "power", "weight", "acceleration", "year")
+#' response <- "cylinders"
+#' cars_glm <- h2o.glm(balance_classes = TRUE, 
+#'                     seed = 1234, 
+#'                     x = predictors, 
+#'                     y = response, 
+#'                     training_frame = cars,
+#'                     max_iterations=0)
+#' h2o.coef_names(cars_glm)
+#' }
+#' @export
+h2o.coef_names <- function(object) {
+    if (is(object, "H2OModel") &&
+        (object@algorithm %in% c("glm"))) {
+        coef_names = object@model$coefficient_names
+        if (object@allparameters$intercept) { # intercept exist
+            return(coef_names[-length(coef_names)])
+        } else {
+            return(coef_names)
+        }
+    }
 }
 
 #'
@@ -2008,22 +3106,63 @@ grabOneModelCoef <- function(modelIDs, index, standardized) {
 #' @export
 h2o.coef_norm <- function(object, predictorSize=-1) {
   if (is(object, "H2OModel") &&
-      (object@algorithm %in% c("glm", "gam", "coxph", "maxrglm"))) {
-    if (object@algorithm == "maxrglm") {
-      modelIDs <- object@model$best_model_ids
-      numModels = length(modelIDs)
-      if (predictorSize == 0)
-        stop("predictorSize (predictor subset size) must be between 0 and the total number of predictors used.")
-      if (predictorSize > numModels)
-        stop("predictorSize (predictor subset size) cannot exceed the total number of predictors used.")
-      if (predictorSize > 0) { # subset size was specified {
-        return(grabOneModelCoef(modelIDs, predictorSize, TRUE))
+      (object@algorithm %in% c("glm", "gam", "coxph", "modelselection"))) {
+    if (object@algorithm == "modelselection") {
+      if (object@allparameters$mode == "maxrsweep" &&
+          !object@allparameters$build_glm_model) {
+        numModels <- length(object@model$best_r2_values)
+        maxPredNumbers <- object@parameters$max_predictor_number
+        stopifnot(
+            "predictorSize (predictor subset size) must be between 0 and the total number of predictors used." = predictorSize != 0,
+            "predictorSize (predictor subset size) cannot exceed the total number of predictors used." = predictorSize <= maxPredNumbers
+        )
+        if (predictorSize < 0) {
+          coeffs <- vector("list", numModels)
+          for (index in seq(numModels)) {
+            coeffs[[index]] <-
+              structure(
+                object@model$coefficient_values_normalized[[index]],
+                names = object@model$coefficient_names[[index]]
+              )
+          }
+          return(coeffs)
+        } else {
+          return(structure(object@model$coefficient_values_normalized[[predictorSize]],
+                    names = object@model$coefficient_names[[predictorSize]]))
+        }
+        
+        if (predictorSize < 0) {
+          structure(names=object@model$coefficient_names, object@model$coefficient_values_normalized)
+        } else {
+          structure(names=object@model$coefficient_names[[predictorSize]], object@model$coefficient_values_normalized[[predictorSize]])    
+        }        
       } else {
-      coeffs <- vector("list", numModels)
-      for (index in seq(numModels)) {
-        coeffs[[index]] <- grabOneModelCoef(modelIDs, index, TRUE)
-      }
-      return(coeffs)
+        modelIDs <- object@model$best_model_ids
+        numModels = length(modelIDs)
+        mode <- object@parameters$mode
+        maxPredNumbers <- numModels
+        stopifnot(
+            "predictorSize (predictor subset size) must be between 0 and the total number of predictors used." = predictorSize != 0,
+            "predictorSize (predictor subset size) cannot exceed the total number of predictors used." = predictorSize <= maxPredNumbers
+        )
+        if (predictorSize > 0) {
+          # subset size was specified
+          if (mode == "backward") {
+            return(grabOneModelCoef(
+              modelIDs,
+              numModels - (maxPredNumbers - predictorSize),
+              TRUE
+            ))
+          } else {
+            return(grabOneModelCoef(modelIDs, predictorSize, TRUE))
+          }
+        } else {
+          coeffs <- vector("list", numModels)
+          for (index in seq(numModels)) {
+            coeffs[[index]] <- grabOneModelCoef(modelIDs, index, TRUE)
+          }
+          return(coeffs)
+        }
       }
     }
     if (object@allparameters$family %in% c("multinomial", "ordinal")) {
@@ -2037,7 +3176,7 @@ h2o.coef_norm <- function(object, predictorSize=-1) {
       )
     }
   } else {
-    stop("Can only extract coefficients from GAMs/GLMs")
+    stop("Can only extract coefficients from GAMs/GLMs/CoxPHs/ModelSelections")
   }
 }
 
@@ -2536,7 +3675,10 @@ h2o.feature_interaction <- function(model, max_interaction_depth = 100, max_tree
             
             json <- .h2o.doSafePOST(urlSuffix = "FeatureInteraction", parms=parms)
             source <- .h2o.fromJSON(jsonlite::fromJSON(json,simplifyDataFrame=FALSE))
-            
+            if(is.null(source$feature_interaction)){
+                warning(paste0("There is no feature interaction for this model."))
+                return(NULL)
+            }
             return(source$feature_interaction)
         } else {
             warning(paste0("No calculation available for this model"))
@@ -2552,6 +3694,8 @@ h2o.feature_interaction <- function(model, max_interaction_depth = 100, max_tree
 #' Calculates Friedman and Popescu's H statistics, in order to test for the presence of an interaction between specified variables in h2o gbm and xgb models.
 #' H varies from 0 to 1. It will have a value of 0 if the model exhibits no interaction between specified variables and a correspondingly larger value for a 
 #' stronger interaction effect between them. NaN is returned if a computation is spoiled by weak main effects and rounding errors.
+#'
+#' This statistic can be calculated only for numerical variables. Missing values are supported.
 #' 
 #' See Jerome H. Friedman and Bogdan E. Popescu, 2008, "Predictive learning via rule ensembles", *Ann. Appl. Stat.*
 #' **2**:916-954, http://projecteuclid.org/download/pdfview_1/euclid.aoas/1223908046, s. 8.1.
@@ -2794,7 +3938,7 @@ h2o.metric <- function(object, thresholds, metric, transform=NULL) {
           }
         }
       }
-    } else if (thresholds == 'max' && missing(metric)) {
+    } else if (all(thresholds == 'max') && missing(metric)) {
       metrics <- object@metrics$max_criteria_and_metric_scores
     } else {
       if (missing(metric)) {
@@ -2802,7 +3946,7 @@ h2o.metric <- function(object, thresholds, metric, transform=NULL) {
       } else {
         h2o_metric <- unlist(lapply(metric, function(m) ifelse(m %in% avail_metrics, m, ifelse(m %in% names(.h2o.metrics_aliases), .h2o.metrics_aliases[m], m))))
       }
-      if (thresholds == 'max') thresholds <- h2o.find_threshold_by_max_metric(object, h2o_metric)
+      if (all(thresholds == 'max')) thresholds <- h2o.find_threshold_by_max_metric(object, h2o_metric)
       metrics <- lapply(thresholds, function(t,o,m) h2o.find_row_by_threshold(o, t)[, m], object, h2o_metric)
       if (!missing(transform) && 'op' %in% names(transform)) {
         metrics <- lapply(metrics, transform$op)
@@ -3204,14 +4348,13 @@ h2o.num_iterations <- function(object) { object@model$model_summary$number_of_it
 #' Retrieve centroid statistics
 #'
 #' Retrieve the centroid statistics.
-#' If "train", "valid", and "xval" parameters are FALSE (default), then the training centroid stats value is returned. If more
-#' than one parameter is set to TRUE, then a named list of centroid stats data frames are returned, where the names are "train", "valid"
-#' or "xval".
+#' If "train" and "valid" parameters are FALSE (default), then the training centroid stats value is returned. If more
+#' than one parameter is set to TRUE, then a named list of centroid stats data frames are returned, where the names are "train" or "valid"
+#' For cross validation metrics this statistics are not available.
 #'
 #' @param object An \linkS4class{H2OClusteringModel} object.
 #' @param train Retrieve the training centroid statistics
 #' @param valid Retrieve the validation centroid statistics
-#' @param xval Retrieve the cross-validation centroid statistics
 #' @examples 
 #' \dontrun{
 #' library(h2o)
@@ -3222,9 +4365,9 @@ h2o.num_iterations <- function(object) { object@model$model_summary$number_of_it
 #' h2o.centroid_stats(km, train = TRUE)
 #' }
 #' @export
-h2o.centroid_stats <- function(object, train=FALSE, valid=FALSE, xval=FALSE) {
+h2o.centroid_stats <- function(object, train=FALSE, valid=FALSE) {
   model.parts <- .model.parts(object)
-  if ( !train && !valid && !xval ) return( model.parts$tm@metrics$centroid_stats )
+  if ( !train && !valid) return( model.parts$tm@metrics$centroid_stats )
   v <- list()
   v_names <- c()
   if ( train ) {
@@ -3236,13 +4379,6 @@ h2o.centroid_stats <- function(object, train=FALSE, valid=FALSE, xval=FALSE) {
     else {
       v[[length(v)+1]] <- model.parts$vm@metrics$centroid_stats
       v_names <- c(v_names,"valid")
-    }
-  }
-  if ( xval ) {
-    if( is.null(model.parts$xm) ) invisible(.warn.no.cross.validation())
-    else {
-      v[[length(v)+1]] <- model.parts$xm@metrics$centroid_stats
-      v_names <- c(v_names,"xval")
     }
   }
   names(v) <- v_names
@@ -3566,6 +4702,7 @@ h2o.null_dof <- function(object, train=FALSE, valid=FALSE, xval=FALSE) {
 #' @seealso \code{\link{predict}} for generating prediction frames,
 #'          \code{\link{h2o.performance}} for creating
 #'          \linkS4class{H2OModelMetrics}.
+#' @aliases h2o.gains_lift
 #' @examples
 #' \dontrun{
 #' library(h2o)
@@ -3588,18 +4725,22 @@ setGeneric("h2o.gainsLift", function(object, ...) {})
 
 #' @rdname h2o.gainsLift
 #' @export
+h2o.gains_lift <- function(object, ...) h2o.gainsLift(object, ...)
+
+#' @rdname h2o.gainsLift
+#' @export
 setMethod("h2o.gainsLift", "H2OModel", function(object, newdata, valid=FALSE, xval=FALSE,...) {
   model.parts <- .model.parts(object)
   if( missing(newdata) ) {
     if( valid ) {
       if( is.null(model.parts$vm) ) return( invisible(.warn.no.validation()) )
-      else                          return( h2o.gainsLift(model.parts$vm) )
+      else                          return( h2o.gainsLift(model.parts$vm, ...) )
     }
     if ( xval ) {
       if( is.null(model.parts$xm) ) return( invisible(.warn.no.cross.validation()))
-      else                          return( h2o.gainsLift(model.parts$xm) )
+      else                          return( h2o.gainsLift(model.parts$xm, ...) )
     }
-    return( h2o.gainsLift(model.parts$tm) )
+    return( h2o.gainsLift(model.parts$tm, ...) )
   } else {
     if( valid ) stop("Cannot have both `newdata` and `valid=TRUE`", call.=FALSE)
     if( xval )  stop("Cannot have both `newdata` and `xval=TRUE`", call.=FALSE)
@@ -3699,6 +4840,7 @@ setMethod("h2o.kolmogorov_smirnov", "H2OModel", function(object) {
 #'        This value is only used in the case of
 #'        \linkS4class{H2OBinomialMetrics} objects.
 #' @param valid Retrieve the validation metric.
+#' @param xval Retrieve the cross-validation metric.
 #' @param ... Extra arguments for extracting train or valid confusion matrices.
 #' @return Calling this function on \linkS4class{H2OModel} objects returns a
 #'         confusion matrix corresponding to the \code{\link{predict}} function.
@@ -3725,14 +4867,23 @@ setGeneric("h2o.confusionMatrix", function(object, ...) {})
 
 #' @rdname h2o.confusionMatrix
 #' @export
-setMethod("h2o.confusionMatrix", "H2OModel", function(object, newdata, valid=FALSE, ...) {
+setMethod("h2o.confusionMatrix", "H2OModel", function(object, newdata, valid=FALSE, xval=FALSE,...) {
   model.parts <- .model.parts(object)
   if( missing(newdata) ) {
     if( valid ) {
       if( is.null(model.parts$vm) ) return( invisible(.warn.no.validation()) )
       else                          return( h2o.confusionMatrix(model.parts$vm, ...) )
-    } else                          return( h2o.confusionMatrix(model.parts$tm, ...) )
-  } else if( valid ) stop("Cannot have both `newdata` and `valid=TRUE`", call.=FALSE)
+    } else if( xval ) {
+      if( is.null(model.parts$xm) ) return( invisible(.warn.no.cross.validation()) )
+      else                          return( h2o.confusionMatrix(model.parts$xm, ...) )
+    }
+    else {
+                                    return( h2o.confusionMatrix(model.parts$tm, ...) )
+    }   
+  } else {
+    if( valid ) stop("Cannot have both `newdata` and `valid=TRUE`", call.=FALSE)
+    if( xval ) stop("Cannot have both `newdata` and `xval=TRUE`", call.=FALSE)
+  }
 
   # ok need to score on the newdata
   url <- paste0("Predictions/models/",object@model_id, "/frames/", h2o.getId(newdata))
@@ -3776,7 +4927,7 @@ setMethod("h2o.confusionMatrix", "H2OModelMetrics", function(object, thresholds=
   if( is(thresholds, "list") ) thresholds_list = thresholds
     else {
       if( is.null(thresholds) ) thresholds_list = list()
-      else thresholds_list = list(thresholds)
+      else thresholds_list = as.list(thresholds)
   }
 
   # error check the metrics_list and thresholds_list
@@ -3863,6 +5014,7 @@ setMethod("h2o.confusionMatrix", "H2OModelMetrics", function(object, thresholds=
 #'     plot(gbm, timestep = "number_of_trees", metric = "mae")
 #' }
 #' }
+#' @method plot H2OModel
 #' @export
 plot.H2OModel <- function(x, timestep = "AUTO", metric = "AUTO", ...) {
   df <- as.data.frame(x@model$scoring_history)
@@ -3884,9 +5036,6 @@ plot.H2OModel <- function(x, timestep = "AUTO", metric = "AUTO", ...) {
       allowed_metrics <- c("deviance_train", "deviance_test", "deviance_xval")
       allowed_timesteps <- c("iteration", "duration")
       df <- df[df["alpha"] == x@model$alpha_best,]
-    } else if (!is.null(x@allparameters$HGLM) && x@allparameters$HGLM) {
-      allowed_metrics <- c("convergence", "sumetaieta02")
-      allowed_timesteps <- c("iterations", "duration")
     } else {
       allowed_metrics <- c("objective", "negative_log_likelihood")
       allowed_timesteps <- c("iterations", "duration")
@@ -4159,12 +5308,97 @@ h2o.std_coef_plot <- function(model, num_of_features = NULL){
 
 }
 
+#' Plot Gains/Lift curves
+#' @param object Either an H2OModel or H2OModelMetrics
+#' @param type What curve to plot. One of "both", "gains", "lift".
+#' @param ... Optional arguments
+#'
+#' @examples
+#' \dontrun{
+#' library(h2o)
+#' h2o.init()
+#' data <- h2o.importFile(
+#' path = "https://s3.amazonaws.com/h2o-public-test-data/smalldata/airlines/allyears2k_headers.zip")
+#' model <- h2o.gbm(x = c("Origin", "Distance"), y = "IsDepDelayed", training_frame = data, ntrees = 1)
+#' h2o.gains_lift_plot(model)
+#' }
+#' @export
+setGeneric("h2o.gains_lift_plot", function(object, type = c("both", "gains", "lift"), ...) {})
+
+.gains_lift_plot <- function(gain_table, type) {
+  labels <- character()
+  colors <- character()
+
+  if (type == "both") {
+    ylim <- c(0, max(gain_table$cumulative_capture_rate, gain_table$cumulative_lift))
+    ylab <- "cumulative capture rate, cumulative lift"
+    title <- "Gains / Lift"
+  } else if (type == "gains") {
+    ylim <- c(0, max(gain_table$cumulative_capture_rate))
+    ylab <- "cumulative capture rate"
+    title <- "Gains"
+  } else if (type == "lift") {
+    ylim <- c(0, max(gain_table$cumulative_lift))
+    ylab <- "cumulative lift"
+    title <- "Lift"
+  }
+  if (type %in% c("both", "gains")) {
+    graphics::plot(gain_table$cumulative_data_fraction,
+                   gain_table$cumulative_capture_rate,
+                   type='l',
+                   ylim = ylim,
+                   col = "blue",
+                   xlab = "cumulative data fraction",
+                   ylab = ylab,
+                   main = title,
+                   panel.first = grid())
+    labels <- c("cummulative capture rate")
+    colors <- c("blue")
+  }
+  if (type %in% c("both", "lift")) {
+    opar <- par(new = type == "both")  # if new == T => don't clean the plot
+    on.exit(par(opar))
+    graphics::plot(gain_table$cumulative_data_fraction,
+                   gain_table$cumulative_lift,
+                   type = "l",
+                   ylim = ylim,
+                   col = "orange",
+                   xlab = "cumulative data fraction",
+                   ylab = ylab,
+                   main = title,
+                   panel.first = grid())
+    labels <- c(labels, "cummulative lift")
+    colors <- c(colors, "orange")
+  }
+  legend("topright", labels, lty = 1, col = colors)
+}
+
+#' Plot Gains/Lift curves
+#' @param object H2OModelMetrics object
+#' @param type What curve to plot. One of "both", "gains", "lift".
+#' @export
+setMethod("h2o.gains_lift_plot", "H2OModelMetrics", function(object, type = c("both", "gains", "lift")) {
+  gain_table <- h2o.gainsLift(object)
+  .gains_lift_plot(gain_table, type = match.arg(type))
+})
+
+#' Plot Gains/Lift curves
+#' @param object H2OModel object
+#' @param type What curve to plot. One of "both", "gains", "lift".
+#' @param xval if TRUE, use cross-validation metrics
+#' @export
+setMethod("h2o.gains_lift_plot", "H2OModel", function(object, type = c("both", "gains", "lift"), xval = FALSE) {
+  gain_table <- h2o.gainsLift(object, xval = xval)
+  .gains_lift_plot(gain_table, type = match.arg(type))
+})
+
+#' @method plot H2OBinomialMetrics
 #' @export
 plot.H2OBinomialMetrics <- function(x, type = "roc", main, ...) {
   # TODO: add more types (i.e. cutoffs)
-  if(!type %in% c("roc", "pr")) stop("type must be 'roc' or 'pr'")
+  if(!type %in% c("roc", "pr", "gains_lift")) stop("type must be 'roc', 'pr', or 'gains_lift'")
   if(type == "roc") {
-    xaxis <- "False Positive Rate (TPR)"; yaxis = "True Positive Rate (FPR)"
+    xaxis <- "False Positive Rate (FPR)"; yaxis = "True Positive Rate (TPR)"
     if(missing(main)) {
       main <- "Receiver Operating Characteristic curve"
       if(x@on_train) {
@@ -4190,35 +5424,48 @@ plot.H2OBinomialMetrics <- function(x, type = "roc", main, ...) {
     xdata <- rev(x@metrics$thresholds_and_metric_scores$recall)
     ydata <- rev(x@metrics$thresholds_and_metric_scores$precision)
     graphics::plot(xdata, ydata, main = main, xlab = xaxis, ylab = yaxis, ylim=c(0,1), xlim=c(0,1), type='l', lty=2, col='blue', lwd=2, panel.first = grid())
+  } else if (type == "gains_lift") {
+    h2o.gains_lift_plot(x, ...)
   }
 }
 
+#' @method plot H2OBinomialUpliftMetrics
 #' @export
-plot.H2OBinomialUpliftMetrics <- function(x, metric = "qini", main, ...) {
-    if(!metric %in% c("qini", "lift", "gain")) stop("metric must be 'qini' or 'lift' or 'gain'")
+plot.H2OBinomialUpliftMetrics <- function(x, metric="AUTO", normalize=FALSE, main, ...) {
+    if(!metric %in% c("AUTO", "qini", "lift", "gain")) stop("metric must be 'AUTO', 'qini' or 'lift' or 'gain'")
+    if (metric == "AUTO") metric = "qini"
     xaxis <- "Number Targeted"; yaxis = paste("Cumulative", metric)
     if(missing(main)) {
-        main <- paste("Cumulative Uplift Curve - ", metric)
+        if(normalize){
+          main <- paste("Cumulative Uplift Curve normalized - ", metric)
+        } else {
+          main <- paste("Cumulative Uplift Curve - ", metric)
+        }
         if(x@on_train) {
             main <- paste(main, "(on train)")
         } else if (x@on_valid) {
             main <- paste(main, "(on valid)")
         }
     }
-    metric.auuc <- sprintf('%.4f', eval(parse(text=paste("x@metrics$auuc_table$", metric,"[1]", sep=""))))
-    main <- paste(main, "\nAUUC=", metric.auuc)
+    if(normalize){
+      metric.auuc <- h2o.auuc_normalized(x, metric)
+      ydata <- eval(parse(text=paste("x@metrics$thresholds_and_metric_scores$", metric, "_normalized", sep="")))
+      main <- paste(main, "\nAUUC normalized =", metric.auuc)  
+    } else {
+      metric.auuc <- h2o.auuc(x, metric)
+      ydata <- eval(parse(text=paste("x@metrics$thresholds_and_metric_scores$", metric, sep="")))
+      main <- paste(main, "\nAUUC=", metric.auuc)
+    }
     xdata <- x@metrics$thresholds_and_metric_scores$n
-    ydata <- eval(parse(text=paste("x@metrics$thresholds_and_metric_scores$", metric, sep="")))
     a <- ydata[length(ydata)-1] / xdata[length(xdata)-1]
     yrnd <- xdata * a
     graphics::plot(xdata, ydata, main = main, xlab = xaxis, ylab = yaxis, ylim=c(min(ydata, 0),max(ydata)), xlim=c(min(xdata),max(xdata)), type='l', lty=1, col='blue', lwd=2, panel.first = grid())
     graphics::lines(xdata, yrnd, main = main, xlab = xaxis, ylab = yaxis, ylim=c(min(yrnd, 0),max(yrnd)), xlim=c(min(xdata),max(xdata)), type='l', lty=2, col='black', lwd=2, panel.first = grid())        
-    if(metric == 'lift'){
+    if(metric == 'lift') {
         legend("topright", legend=c(metric, "random"), col=c("blue", "black"), inset=.02, lty=1:2, cex=0.8)  
     } else {
         legend("bottomright", legend=c(metric, "random"), col=c("blue", "black"), inset=.02, lty=1:2, cex=0.8)  
     }
-    
 }
 
 #' @export
@@ -4385,6 +5632,7 @@ h2o.tabulate <- function(data, x, y,
 #'              weights_column = NULL, nbins_x = 10, nbins_y = 10)
 #' plot(tab)
 #' }
+#' @method plot H2OTabulate
 #' @export
 plot.H2OTabulate <- function(x, xlab = x$cols[1], ylab = x$cols[2], base_size = 12, ...) {
 
@@ -4555,7 +5803,7 @@ h2o.cross_validation_predictions <- function(object) {
 #' partial dependence the mean response (probabilities) is returned rather than the mean of the log class probability.
 #'
 #' @param object An \linkS4class{H2OModel} object.
-#' @param data An H2OFrame object used for scoring and constructing the plot.
+#' @param newdata An H2OFrame object used for scoring and constructing the plot.
 #' @param cols Feature(s) for which partial dependence will be calculated.
 #' @param destination_key An key reference to the created partial dependence tables in H2O.
 #' @param nbins Number of bins used. For categorical columns make sure the number of bins exceeds the level count.
@@ -4576,6 +5824,7 @@ h2o.cross_validation_predictions <- function(object) {
 #' @return Plot and list of calculated mean response tables for each feature requested.
 #' @param row_index Row for which partial dependence will be calculated instead of the whole input frame.
 #' @param targets Target classes for multinomial model.    
+#' @param ... Mainly used for backwards compatibility, to allow deprecated parameters.
 #' @examples
 #' \dontrun{
 #' library(h2o)
@@ -4590,90 +5839,99 @@ h2o.cross_validation_predictions <- function(object) {
 #'                         ntrees = 10,
 #'                         max_depth = 5,
 #'                         learn_rate = 0.1)
-#' h2o.partialPlot(object = prostate_gbm, data = prostate, cols = c("AGE", "RACE"))
+#' h2o.partialPlot(object = prostate_gbm, newdata = prostate, cols = c("AGE", "RACE"))
 #'
 #' iris_hex <- as.h2o(iris)
 #' iris_gbm <- h2o.gbm(x = c(1:4), y = 5, training_frame = iris_hex)
 #'
 #' # one target class
-#' h2o.partialPlot(object = iris_gbm, data = iris_hex, cols="Petal.Length", targets=c("setosa"))
+#' h2o.partialPlot(object = iris_gbm, newdata = iris_hex, cols="Petal.Length", targets=c("setosa"))
 #' # three target classes
-#' h2o.partialPlot(object = iris_gbm, data = iris_hex, cols="Petal.Length", 
+#' h2o.partialPlot(object = iris_gbm, newdata = iris_hex, cols="Petal.Length", 
 #'                  targets=c("setosa", "virginica", "versicolor"))
 #' }
 #' @export
 
-h2o.partialPlot <- function(object, data, cols, destination_key, nbins=20, plot = TRUE, plot_stddev = TRUE,
-                            weight_column=-1, include_na=FALSE, user_splits=NULL, col_pairs_2dpdp=NULL, save_to=NULL, 
-                            row_index=-1, targets=NULL) {
+h2o.partialPlot <- function(object, newdata, cols, destination_key, nbins=20, plot = TRUE, plot_stddev = TRUE,
+                            weight_column=-1, include_na=FALSE, user_splits=NULL, col_pairs_2dpdp=NULL, save_to=NULL,
+                            row_index=-1, targets=NULL, ...) {
+  dots <- list(...)
+  for (arg in names(dots)) {
+      if (arg == 'data') {
+          warning("argument 'data' is deprecated; please use 'newdata' instead.")
+          if (missing(newdata))
+              newdata <- dots$data else warning("ignoring 'data' as 'newdata' was also provided.")
+      } else {
+          stop(paste("unused argument", arg))
+      }
+  }
   if(!is(object, "H2OModel")) stop("object must be an H2Omodel")
-  if( is(object, "H2OOrdinalModel")) stop("object must be a regression model or binary and multinomial classfier")
-  if(!is(data, "H2OFrame")) stop("data must be H2OFrame")
+  if(!is(newdata, "H2OFrame")) stop("newdata must be H2OFrame")
   if(!is.numeric(nbins) | !(nbins > 0) ) stop("nbins must be a positive numeric")
   if(!is.logical(plot)) stop("plot must be a logical value")
   if(!is.logical(plot_stddev)) stop("plot must be a logical value")
   if(!is.logical(include_na)) stop("add_missing_NA must be a logical value")
-  if((is(object, "H2OMultinomialModel"))){
-    if(is.null(targets)) stop("targets parameter has to be set for multinomial classification")
+  if((is(object, "H2OMultinomialModel") || is(object, "H2OOrdinalModel"))){
+    if(is.null(targets)) stop("targets parameter has to be set for multinomial classification or ordinal regression")
     for(i in 1:length(targets)){
         if(!is.character(targets[i])) stop("targets parameter must be a list of string values")
     }
   }
   
-  noPairs = missing(col_pairs_2dpdp)
-  noCols = missing(cols)
-  if(noCols && noPairs) cols =  object@parameters$x # set to default only if both are missing
+  noPairs <- missing(col_pairs_2dpdp)
+  noCols <- missing(cols)
+  if(noCols && noPairs) cols <- object@parameters$x # set to default only if both are missing
 
-  y = object@parameters$y
-  numCols = 0
-  numColPairs = 0    
+  y <- object@parameters$y
+  numCols <- 0
+  numColPairs <- 0    
   if (!missing(cols)) { # check valid cols in cols for 1d pdp
     x <- cols
-    args <- .verify_dataxy(data, x, y)
+    args <- .verify_dataxy(newdata, x, y)
   }
   cpairs <- NULL
   if (!missing(col_pairs_2dpdp))   { # verify valid cols for 2d pdp
     for (onePair in col_pairs_2dpdp) {
-      pargs <- .verify_dataxy(data, onePair, y)
+      pargs <- .verify_dataxy(newdata, onePair, y)
       cpairs <-
         c(cpairs, paste0("[", paste (pargs$x, collapse = ','), "]"))
     }
-    numColPairs = length(cpairs)
+    numColPairs <- length(cpairs)
   }
 
   if (is.numeric(weight_column) && (weight_column != -1)) {
       stop("weight_column should be a column name of your data frame.")
   } else if (is.character(weight_column)) { # weight_column_index is column name
-    if (!weight_column %in% h2o.names(data))
+    if (!weight_column %in% h2o.names(newdata))
       stop("weight_column_index should be one of your columns in your data frame.")
     else
-      weight_column <- match(weight_column, h2o.names(data))-1
+      weight_column <- match(weight_column, h2o.names(newdata))-1
   }
   
   if (!is.numeric(row_index)) {
     stop("row_index should be numeric.")
   }
   
-  parms = list()
+  parms <- list()
   if (!missing(col_pairs_2dpdp)) {
     parms$col_pairs_2dpdp <- paste0("[", paste (cpairs, collapse = ','), "]")
   }
   if (!missing(cols)) {
     parms$cols <- paste0("[", paste (args$x, collapse = ','), "]")
-    numCols = length(cols)
+    numCols <- length(cols)
   }
   if(is.null(targets)){
     num_1d_pp_data <- numCols
   } else {
     num_1d_pp_data <- numCols * length(targets)
   }
-  noCols = missing(cols)
+  noCols <- missing(cols)
   parms$model_id  <- attr(object, "model_id")
-  parms$frame_id <- attr(data, "id")
+  parms$frame_id <- attr(newdata, "id")
   parms$nbins <- nbins
   parms$weight_column_index <- weight_column
   parms$add_missing_na <- include_na
-  parms$row_index = row_index
+  parms$row_index <- row_index
 
   if (is.null(user_splits) || length(user_splits) == 0) {
     parms$user_cols <- NULL
@@ -4683,15 +5941,15 @@ h2o.partialPlot <- function(object, data, cols, destination_key, nbins=20, plot 
     user_cols <- c()
     user_values <- c()
     user_num_splits <- c()
-    column_names <- h2o.names(data)
+    column_names <- h2o.names(newdata)
     for (ind in c(1:length(user_splits))) {
       aList <- user_splits[[ind]]
-      csname = aList[1]
+      csname <- aList[1]
       if (csname %in% column_names) {
-        if (h2o.isnumeric(data[csname]) || h2o.isfactor(data[csname])) {
+        if (h2o.isnumeric(newdata[csname]) || h2o.isfactor(newdata[csname]) || h2o.getTypes(newdata)[[which(names(newdata) == csname)]] == "time") {
           nVal <- length(aList)-1
-          if (h2o.isfactor(data[csname])) {
-            domains <- h2o.levels(data[csname]) # enum values
+          if (h2o.isfactor(newdata[csname])) {
+            domains <- h2o.levels(newdata[csname]) # enum values
             tempVal <- aList[2:length(aList)]
             intVals <- c(1:length(tempVal))
             for (eleind in c(1:nVal)) {
@@ -4752,7 +6010,7 @@ h2o.partialPlot <- function(object, data, cols, destination_key, nbins=20, plot 
       max_upper <- max(max_upper, pp[,2] + pp[,3])
       if (i <= num_1d_pp_data) {
         if(is.null(targets)){
-          col_name_index = i
+          col_name_index <- i
           title <- paste("Partial dependency plot for", cols[col_name_index]) 
         } else if(!is.null(targets)){
           if(length(cols) > 1 && i %% length(cols) == 0) {
@@ -4781,8 +6039,8 @@ h2o.partialPlot <- function(object, data, cols, destination_key, nbins=20, plot 
       }
     }
   }
-  col_types = unlist(h2o.getTypes(data))
-  col_names = names(data)
+  col_types <- unlist(h2o.getTypes(newdata))
+  col_names <- names(newdata)
     
   pp.plot.1d <- function(pp) {
     if(!all(is.na(pp))) {
@@ -4803,8 +6061,8 @@ h2o.partialPlot <- function(object, data, cols, destination_key, nbins=20, plot 
       ## Plot one standard deviation above and below the mean
       if(plot_stddev) {
         ## Added upper and lower std dev confidence bound
-        upper = y + stddev
-        lower = y - stddev
+        upper <- y + stddev
+        lower <- y - stddev
         plot(pp[,1:2], type = line_type, pch=pch, medpch=pch, medcol="red", medlty=0, staplelty=0, boxlty=0, col="red", main = attr(pp,"description"), ylim  = c(min(lower), max(upper)))
         pp.plot.1d.plotNA(pp, type, "red")
         polygon(pp.plot.1d.proccessDataForPolygon(c(pp[,1], rev(pp[,1])), c(lower, rev(upper))) , col = adjustcolor("red", alpha.f = 0.1), border = F)
@@ -4823,7 +6081,7 @@ h2o.partialPlot <- function(object, data, cols, destination_key, nbins=20, plot 
         
   pp.plot.1d.plotNA <- function(pp, type, color) {
     ## Plot NA value if numerical
-    NAsIds = which(is.na(pp[,1:1]))
+    NAsIds <- which(is.na(pp[,1:1]))
     if (type != "enum" && include_na && length(NAsIds) != 0) {
         points(pp[,1:1],array(pp[NAsIds, 2:2], dim = c(length(pp[,1:1]), 1)), col=color, type="l", lty=5)
         if (is.null(targets)) {
@@ -4841,14 +6099,12 @@ h2o.partialPlot <- function(object, data, cols, destination_key, nbins=20, plot 
       legendColors <- c()
       legendLtys <- c()
       legendPchs <- c()
-      legendBtys <- c()
       for ( i in 1: length(targets)) {
         # target label
         legendTargets <- append(legendTargets, targets[i])
         legendColors <- append(legendColors, colors[i])
         legendLtys <- append(legendLtys, lty)
         legendPchs <- append(legendPchs, pch)
-        legendBtys <- append(legendBtys, "n")
         # target NAN line label
         if (has_NA[i]) {
           legendTargets <- append(legendTargets, paste(targets[i], " NAN"))
@@ -4856,9 +6112,8 @@ h2o.partialPlot <- function(object, data, cols, destination_key, nbins=20, plot 
           legendLtys <- append(legendLtys, 5)
         } 
         legendPchs <- append(legendPchs, NULL)
-        legendBtys <- append(legendBtys, NULL)
       }
-      legend("topright", legend=legendTargets, col=legendColors, lty=legendLtys, pch=legendPchs, bty=legendBtys, ncol=length(pps))
+      legend("topright", legend=legendTargets, col=legendColors, lty=legendLtys, pch=legendPchs, bty="n", ncol=length(pps))
     }  else {
       legend("topright",legend=targets, col=colors, lty=lty, pch=pch, bty="n", ncol=length(pps))
     }
@@ -4866,10 +6121,10 @@ h2o.partialPlot <- function(object, data, cols, destination_key, nbins=20, plot 
     
   pp.plot.1d.proccessDataForPolygon <- function(X, Y) {
     ## polygon can't handle NAs
-    NAsIds = which(is.na(X))
+    NAsIds <- which(is.na(X))
     if (length(NAsIds) != 0) {
-      X = X[-NAsIds]
-      Y = Y[-NAsIds]
+      X <- X[-NAsIds]
+      Y <- Y[-NAsIds]
     }
     return(cbind(X, Y))
   }        
@@ -4958,10 +6213,10 @@ h2o.partialPlot <- function(object, data, cols, destination_key, nbins=20, plot 
       ## Plot one standard deviation above and below the mean
       if (plot_stddev) {
         ## Added upper and lower std dev confidence bound
-        upper = pp[, 3] + pp[, 4]
-        lower = pp[, 3] - pp[, 4]
-        Zupper = matrix(upper, ncol=dim(XX)[2], byrow=F)
-        Zlower = matrix(lower, ncol=dim(XX)[2], byrow=F)
+        upper <- pp[, 3] + pp[, 4]
+        lower <- pp[, 3] - pp[, 4]
+        Zupper <- matrix(upper, ncol=dim(XX)[2], byrow=F)
+        Zlower <- matrix(lower, ncol=dim(XX)[2], byrow=F)
         rgl::open3d()
         plot3Drgl::persp3Drgl(XX, YY, ZZ, theta=30, phi=15, axes=TRUE,scale=2, box=TRUE, nticks=5,
                 ticktype="detailed", xlab=names(pp)[1], ylab=names(pp)[2], zlab="2D partial plots",
@@ -5001,7 +6256,7 @@ h2o.partialPlot <- function(object, data, cols, destination_key, nbins=20, plot 
   pp.plot.save.2d <- function(pp, nBins=nbins, user_cols=NULL, user_num_splits=NULL) {
     # If user accidentally provides one of the most common suffixes in R, it is removed.
     save_to <- gsub(replacement = "", pattern = "(\\.png)|(\\.jpg)|(\\.pdf)", x = save_to)
-    colnames = paste0(names(pp)[1], "_", names(pp)[2])
+    colnames <- paste0(names(pp)[1], "_", names(pp)[2])
     destination_file <- paste0(save_to,"_",colnames,'.png')
     pp.plot.2d(pp, nbins, user_cols, user_num_splits)
     rgl::snapshot3d(destination_file)
@@ -5019,7 +6274,7 @@ h2o.partialPlot <- function(object, data, cols, destination_key, nbins=20, plot 
       from <- 1
       to <- length(targets)
       for(i in 1:numCols) {
-        pp = pps[from:to]
+        pp <- pps[from:to]
         pp.plot.1d.multinomial(pp)
         if(!is.null(save_to)){
           pp.plot.save.1d.multinomial(pp)
@@ -5154,7 +6409,7 @@ h2o.deepfeatures <- function(object, data, layer) {
 #'
 #' #' @aliases H2ONode
 #'
-setClass("H2ONode", representation(
+setClass("H2ONode", slots = c(
   id = "integer"
 ))
 
@@ -5165,7 +6420,7 @@ setClass("H2ONode", representation(
 #'
 #' #' @aliases H2OLeafNode
 #'
-setClass("H2OLeafNode", representation(
+setClass("H2OLeafNode", slots = c(
   prediction = "numeric"
 ),
 contains = "H2ONode")
@@ -5185,7 +6440,7 @@ contains = "H2ONode")
 #' @export
 setClass(
   "H2OSplitNode",
-  representation(
+  slots = c(
     threshold = "numeric",
     left_child = "H2ONode",
     right_child = "H2ONode",
@@ -5205,27 +6460,29 @@ setMethod('show', 'H2ONode',
             print.H2ONode(object)
           })
 
-print.H2ONode <- function(node){
-  cat("Node ID", node@id, "\n\n")
-  if(class(node) == "H2OLeafNode"){
-    cat("Terminal node. Prediction is", node@prediction)
+#' @method print H2ONode
+#' @export
+print.H2ONode <- function(x, ...){
+  cat("Node ID", x@id, "\n\n")
+  if (inherits(x, "H2OLeafNode")){
+    cat("Terminal node. Prediction is", x@prediction)
     return()
   }
 
 
-  if(!is.null(node@left_child)) cat("Left child node ID =", node@left_child@id, "\n") else cat("There is no left child \n")
-  if(!is.null(node@right_child)) cat("Right child node ID =", node@right_child@id,"\n") else cat("There is no right child \n")
+  if(!is.null(x@left_child)) cat("Left child node ID =", x@left_child@id, "\n") else cat("There is no left child \n")
+  if(!is.null(x@right_child)) cat("Right child node ID =", x@right_child@id,"\n") else cat("There is no right child \n")
   cat("\n")
-  cat("Splits on column", node@split_feature, "\n")
+  cat("Splits on column", x@split_feature, "\n")
 
-  if(is.na(node@threshold)){
-    if(!is.null(node@left_child)) cat("  - Categorical levels going to the left node:", node@left_levels, "\n")
-    if(!is.null(node@right_child)) cat("  - Categorical levels to the right node:", node@right_levels, "\n")
+  if(is.na(x@threshold)){
+    if(!is.null(x@left_child)) cat("  - Categorical levels going to the left node:", x@left_levels, "\n")
+    if(!is.null(x@right_child)) cat("  - Categorical levels to the right node:", x@right_levels, "\n")
   } else {
-    cat("Split threshold <", node@threshold,"to the left node, >=",node@threshold ,"to the right node\n")
+    cat("Split threshold <", x@threshold,"to the left node, >=",x@threshold ,"to the right node\n")
   }
   cat("\n")
-  if(!is.na(node@na_direction)) cat("NA values go to the", node@na_direction,"node")
+  if(!is.na(x@na_direction)) cat("NA values go to the", x@na_direction,"node")
 }
 
 #'
@@ -5256,7 +6513,7 @@ print.H2ONode <- function(node){
 #' @export
 setClass(
   "H2OTree",
-  representation(
+  slots = c(
     root_node = "H2ONode",
     left_children = "integer",
     right_children = "integer",
@@ -5285,9 +6542,11 @@ setMethod('show', 'H2OTree',
             print.H2OTree(object)
           })
 
-print.H2OTree <- function(tree){
-  cat(paste0("Tree related to model '", tree@model_id,"'. Tree number is"), paste0(tree@tree_number,", tree class is '",tree@tree_class, "'\n"))
-  cat("The tree has", length(tree), "nodes")
+#' @method print H2OTree
+#' @export
+print.H2OTree <- function(x, ...){
+  cat(paste0("Tree related to model '", x@model_id,"'. Tree number is"), paste0(x@tree_number,", tree class is '",x@tree_class, "'\n"))
+  cat("The tree has", length(x), "nodes")
 }
 
 #'
@@ -5563,6 +6822,9 @@ h2o.get_seed <- get_seed.H2OModel
 #'
 #' @examples
 #' \dontrun{
+#' # This example needs a MOJO on disk, and MOJO export requires H2O-3 Enterprise,
+#' # so the body cannot run on H2O-3 OSS.
+#' if (FALSE) {
 #'
 #' # Import default Iris dataset as H2O frame
 #' data <- as.h2o(iris)
@@ -5581,6 +6843,7 @@ h2o.get_seed <- get_seed.H2OModel
 #' # Perform scoring with the generic model
 #' generic_model_predictions  <- h2o.predict(generic_model, data)
 #' }
+#' }
 #' @export
 h2o.genericModel <- function(mojo_file_path, model_id=NULL){
   h2o.generic(path = mojo_file_path)
@@ -5598,6 +6861,9 @@ h2o.genericModel <- function(mojo_file_path, model_id=NULL){
 #'
 #' @examples
 #' \dontrun{
+#' # This example needs a MOJO on disk, and MOJO export requires H2O-3 Enterprise,
+#' # so the body cannot run on H2O-3 OSS.
+#' if (FALSE) {
 #'
 #' # Import default Iris dataset as H2O frame
 #' data <- as.h2o(iris)
@@ -5614,6 +6880,7 @@ h2o.genericModel <- function(mojo_file_path, model_id=NULL){
 #'
 #' # Perform scoring with the generic model
 #' predictions  <- h2o.predict(mojo_model, data)
+#' }
 #' }
 #' @export
 h2o.import_mojo <- function(mojo_file_path, model_id=NULL){
@@ -5634,6 +6901,9 @@ h2o.import_mojo <- function(mojo_file_path, model_id=NULL){
 #'
 #' @examples
 #' \dontrun{
+#' # This example needs a MOJO on disk, and MOJO export requires H2O-3 Enterprise,
+#' # so the body cannot run on H2O-3 OSS.
+#' if (FALSE) {
 #'
 #' # Import default Iris dataset as H2O frame
 #' data <- as.h2o(iris)
@@ -5652,10 +6922,11 @@ h2o.import_mojo <- function(mojo_file_path, model_id=NULL){
 #' # Perform scoring with the generic model
 #' predictions  <- h2o.predict(mojo_model, data)
 #' }
+#' }
 #' @export
 h2o.upload_mojo <- function(mojo_local_file_path, model_id=NULL){
   model_file_key <- h2o.uploadFile(mojo_local_file_path, parse = FALSE)
-  model <- h2o.generic(model_key = model_file_key, model_id = model_id, path = mojo_local_file_path)
+  model <- h2o.generic(model_key = model_file_key, model_id = model_id)
   return(model)
 }
 
@@ -5688,4 +6959,98 @@ h2o.reset_threshold <- function(object, threshold) {
     warning( paste0("Threshold cannot be reset for class ", class(o)) )
     return(NULL)
   }
+}
+
+#' Calculates per-level mean of predicted value vs actual value for a given variable.
+#'
+#' In the basic setting, this function is equivalent to doing group-by on variable and calculating
+#' mean on predicted and actual. In addition to that it also handles NAs in response and weights
+#' automatically.
+#'
+#' @param object    A trained supervised H2O model.
+#' @param newdata   Input frame (can be training/test/.. frame).
+#' @param predicted Frame of predictions for the given input frame.
+#' @param variable  Name of variable to inspect.
+#' @return          H2OTable
+#' @export
+h2o.predicted_vs_actual_by_variable <- function(object,
+                                                newdata,
+                                                predicted,
+                                                variable
+) {
+  if (missing(object)) stop("Parameter 'object' needs to be specified.")
+  if (!is(object, "H2OModel")) stop("Parameter 'object' has to be an H2O model.")
+  .validate.H2OFrame(newdata, required = TRUE)
+
+  vi <- as.data.frame(.newExpr("predicted.vs.actual.by.var",
+                               object@model_id,
+                               newdata,
+                               paste0("'", variable, "'"),
+                               predicted
+  ), check.names = FALSE)
+  oldClass(vi) <- c("H2OTable", "data.frame")
+  attr(vi, "header") <- "Predicted vs Actual by Variable"
+  attr(vi, "description") <- ""
+  attr(vi, "formats") <- c("%s", rep_len("%5f", ncol(vi) - 1))
+  vi
+}
+
+#' Create a leaderboard from a list of models, grids and/or automls.
+#'
+#' @param object List of models, automls, or grids; or just single automl/grid object.
+#' @param leaderboard_frame Frame used for generating the metrics (optional).
+#' @param sort_metric Metric used for sorting the leaderboard.
+#' @param extra_columns What extra columns should be calculated (might require leaderboard_frame). Use "ALL" for all available or list of extra columns.
+#' @param scoring_data Metrics to be reported in the leaderboard ("xval", "train", or "valid"). Used if no leaderboard_frame is provided.
+#' @return data.frame
+#'
+#' @examples
+#' \dontrun{
+#' library(h2o)
+#' h2o.init()
+#' iris_hf <- as.h2o(iris)
+#' grid <- h2o.grid("gbm", x = c(1:4), y = 5, training_frame = iris_hf,
+#'                  hyper_params = list(ntrees = c(1, 2, 3)))
+#' h2o.make_leaderboard(grid, iris_hf)
+#' }
+#' @export
+h2o.make_leaderboard <- function(object,
+                                 leaderboard_frame,
+                                 sort_metric = "AUTO",
+                                 extra_columns = c(),
+                                 scoring_data = c("AUTO", "train", "valid", "xval")
+) {
+  .get_models <- function(obj){
+    if (is.list(obj)) {
+      return(lapply(obj, .get_models))
+    } else if (.is.H2OAutoML(obj)) {
+      return(unlist(as.list(obj@leaderboard$model_id)))
+    } else if (inherits(obj, "H2OGrid")) {
+      return(unlist(obj@model_ids))
+    } else if (is.character(obj)) {
+      return(obj)
+    } else if (inherits(obj, "H2OModel")) {
+      return(h2o.keyof(obj))
+    } else {
+      stop("Unsupported object!")
+    }
+  }
+  model_ids <- unlist(.get_models(object))
+  extra_cols <- paste0(extra_columns, collapse = "\", \"")
+  scoring_data <- match.arg(scoring_data)
+  if (missing(leaderboard_frame) || is.null(leaderboard_frame)) {
+    leaderboard_frame_key <- NULL
+  } else {
+    # make sure the frame has assigned a key in R, this is necessary when subsetting h2o frame but not evaluating the subset
+    if (is.null(h2o.keyof(leaderboard_frame))) head(leaderboard_frame, n = 1)
+    leaderboard_frame_key <- h2o.keyof(leaderboard_frame)
+  }
+
+  as.data.frame(.newExpr("makeLeaderboard",
+                         model_ids,
+                         paste0("\"", leaderboard_frame_key, "\""),
+                         paste0("\"", sort_metric, "\""),
+                         paste0("[\"", extra_cols, "\"]"),
+                         paste0("\"", scoring_data, "\"")
+  ), check.names = FALSE)
 }

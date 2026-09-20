@@ -96,6 +96,10 @@ The steps for saving and loading models in Flow are described in the **Using Flo
 MOJO Models
 -----------
 
+.. note::
+
+   Saving or downloading a MOJO requires H2O-3 Secure, the commercially supported tier of H2O-3. H2O-3 OSS blocks ``h2o.save_mojo()``, ``h2o.download_mojo()``, and ``h2o.download_pojo()``. A free MOJO license covers non-commercial use. Contact enterprise@h2o.ai.
+
 Introduction
 ~~~~~~~~~~~~
 
@@ -113,21 +117,26 @@ Supported MOJOs
   :align: middle
 
 +---------------+------------+------------+
-| Algorithm     | Importable | Exportable |
+| Algorithm     | Exportable | Importable |
 +===============+============+============+
 | AutoML**      | |yes|      | |yes|      |
 +---------------+------------+------------+
-| GAM           | |yes|      | |no|       |
+| GAM           | |yes|      | |yes|      |
 +---------------+------------+------------+
 | GBM           | |yes|      | |yes|      |
 +---------------+------------+------------+
 | GLM           | |yes|      | |yes|      |
 +---------------+------------+------------+
-| MAXR          | |no|       | |no|       |
+| Isotonic      | |yes|      | |no|       |
+| Regression    |            |            |
++---------------+------------+------------+
+| ModelSelection| |no|       | |no|       |
 +---------------+------------+------------+
 | XGBoost       | |yes|      | |yes|      |
 +---------------+------------+------------+
 | DRF           | |yes|      | |yes|      |
++---------------+------------+------------+
+| Uplift DRF    | |yes|      | |yes|      |
 +---------------+------------+------------+
 | Deep Learning | |yes|      | |yes|      |
 +---------------+------------+------------+
@@ -138,7 +147,7 @@ Supported MOJOs
 +---------------+------------+------------+
 | RuleFit       | |yes|      | |yes|      |
 +---------------+------------+------------+
-| Naive Bayes   | |no|       | |no|       |
+| Naïve Bayes   | |no|       | |no|       |
 | Classifier    |            |            |
 +---------------+------------+------------+
 | SVM           | |no|       | |no|       |
@@ -148,7 +157,7 @@ Supported MOJOs
 | Isolation     | |yes|      | |yes|      |
 | Forest        |            |            |
 +---------------+------------+------------+
-| Extended      | |no|       | |no|       |
+| Extended      | |yes|      | |yes|      |
 | Isolation     |            |            |
 | Forest        |            |            |
 +---------------+------------+------------+
@@ -158,6 +167,10 @@ Supported MOJOs
 +---------------+------------+------------+
 | PCA           | |yes|      | |no|       |
 +---------------+------------+------------+
+| Decision Tree | |no|       | |no|       |
++---------------+------------+------------+
+| AdaBoost      | |no|       | |no|       |
++---------------+------------+------------+
 
 **Note**: AutoML will always produce a model which has a MOJO. Though it depends on the run, you are most likely to get a Stacked Ensemble. While all models are importable, only individual models are exportable.
 
@@ -166,6 +179,8 @@ Saving and Importing MOJOs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Importing a MOJO can be done from Python, R, and Flow. H2O imports the model and embraces it for the purpose of scoring. Information output about the model may be limited.
+
+**Note**: Your model will not produce MOJOs if you build it using `interactions <data-science/algo-params/interactions.html>`__. 
 
 Saving and Importing in R or Python
 '''''''''''''''''''''''''''''''''''

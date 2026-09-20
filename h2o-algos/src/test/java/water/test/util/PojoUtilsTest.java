@@ -1,5 +1,6 @@
 package water.test.util;
 
+import hex.glm.GLMModel;
 import hex.tree.gbm.GBMModel;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -11,6 +12,8 @@ import water.api.schemas3.FrameV3;
 import water.api.schemas3.SchemaV3;
 import water.fvec.Frame;
 import water.util.PojoUtils;
+
+import java.lang.reflect.Field;
 
 public class PojoUtilsTest extends TestUtil {
   @BeforeClass()
@@ -114,4 +117,34 @@ public class PojoUtilsTest extends TestUtil {
     Assert.assertEquals(5, nested.parameters._max_depth);
   }
 
+  @Test
+  public void TestEquals() {
+    GLMModel.GLMParameters params1 = new GLMModel.GLMParameters();
+    GLMModel.GLMParameters params2 = new GLMModel.GLMParameters();
+
+    Field field1, field2 = null;
+    try {
+      field1 = params1.getClass().getDeclaredField("_alpha");
+      field2 = params2.getClass().getDeclaredField("_alpha");
+    } catch (NoSuchFieldException e) {
+      throw new IllegalArgumentException("Field _alpha not found!", e);
+    }
+
+    // check null
+    assert PojoUtils.equals(params1,  field1, params2,  field2);
+
+    // check double[] array:
+    params1._alpha = new double[] {1.2, 1.3, 1.4};
+    params2._alpha = new double[] {1.2, 1.3, 1.4};
+    assert PojoUtils.equals(params1,  field1, params2,  field2);
+
+    params1._alpha = new double[] {1.2, 1.3, 1.4};
+    params2._alpha = new double[] {1.2, 1.5, 1.4};
+    assert PojoUtils.equals(params1,  field1, params2,  field2) == false;
+    
+    field1 = params1.getClass().getFields()[3];
+    field2 = params2.getClass().getFields()[3];
+
+    assert PojoUtils.equals(params1,  field1, params2,  field2);
+  }
 }

@@ -101,6 +101,12 @@ public class CloudV3 extends RequestSchemaV3<Iced, CloudV3> {
   @API(help="Cloud is in client mode.", direction=API.Direction.OUTPUT)
   public boolean is_client;
 
+  @API(help="Hadoop version string when the cluster was launched via h2odriver, null otherwise.", direction=API.Direction.OUTPUT)
+  public String hadoop_version;
+
+  @API(help="Whether this server emits anonymous usage telemetry.", direction=API.Direction.OUTPUT)
+  public boolean telemetry_enabled;
+
   @API(help="nodes", direction=API.Direction.OUTPUT)
   public NodeV3[] nodes;
 
@@ -110,6 +116,9 @@ public class CloudV3 extends RequestSchemaV3<Iced, CloudV3> {
   @API(help="leader_idx", direction=API.Direction.OUTPUT)
   public int leader_idx = -1;
 
+  @API(help="web_ip", direction=API.Direction.OUTPUT)
+  public String web_ip=null;
+  
   // Output fields one-per-JVM
   public static class NodeV3 extends SchemaV3<Iced, NodeV3> {
     public NodeV3() {}

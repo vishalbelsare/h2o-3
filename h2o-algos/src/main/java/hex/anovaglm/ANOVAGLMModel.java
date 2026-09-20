@@ -2,6 +2,7 @@ package hex.anovaglm;
 
 import hex.*;
 import hex.deeplearning.DeepLearningModel;
+import hex.genmodel.utils.DistributionFamily;
 import hex.glm.GLM;
 import hex.glm.GLMModel;
 import org.apache.commons.math3.distribution.FDistribution;
@@ -18,6 +19,8 @@ import static hex.anovaglm.ANOVAGLMUtils.generateGLMSS;
 import static hex.gam.MatrixFrameUtils.GAMModelUtils.genCoefficientTable;
 import static hex.glm.GLMModel.GLMParameters.*;
 import static hex.glm.GLMModel.GLMParameters.Family.AUTO;
+import static hex.util.DistributionUtils.distributionToFamily;
+import static hex.util.DistributionUtils.familyToDistribution;
 
 
 public class ANOVAGLMModel extends Model<ANOVAGLMModel, ANOVAGLMModel.ANOVAGLMParameters, ANOVAGLMModel.ANOVAGLMModelOutput>{
@@ -130,6 +133,17 @@ public class ANOVAGLMModel extends Model<ANOVAGLMModel, ANOVAGLMModel.ANOVAGLMPa
         return new DataInfo.MeanImputer();
       }
     }
+
+    @Override
+    public void setDistributionFamily(DistributionFamily distributionFamily) {
+        _family = distributionToFamily(distributionFamily);
+        _link = Link.family_default;
+    }
+
+    @Override
+    public DistributionFamily getDistributionFamily() {
+      return familyToDistribution(_family);
+    }
   }
 
   public static class ANOVAGLMModelOutput extends Model.Output {
@@ -239,7 +253,7 @@ public class ANOVAGLMModel extends Model<ANOVAGLMModel, ANOVAGLMModel.ANOVAGLMPa
   /**
    * The Type III SS calculation, degree of freedom, F-statistics and p-values will be included in the model
    * summary.  For details on how those are calculated, refer to ANOVAGLMTutorial  
-   * https://h2oai.atlassian.net/browse/PUBDEV-8088 section V.
+   * https://github.com/h2oai/h2o-3/issues/7561 section V.
    * 
    * @return a {@link TwoDimTable} representation of the result frame
    */

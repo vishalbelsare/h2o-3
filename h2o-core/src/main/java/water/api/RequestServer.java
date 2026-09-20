@@ -240,7 +240,9 @@ public class RequestServer extends HttpServlet {
    */
   public void doGeneric(String method, HttpServletRequest request, HttpServletResponse response) {
     try {
-      ServletUtils.startTransaction(request.getHeader("User-Agent"));
+      String userAgent = request.getHeader("User-Agent");
+      String sessionKey = request.getHeader("Session-Key");
+      ServletUtils.startTransaction(userAgent, sessionKey);
 
       // Note that getServletPath does an un-escape so that the %24 of job id's are turned into $ characters.
       String uri = request.getServletPath();
@@ -776,15 +778,15 @@ public class RequestServer extends HttpServlet {
     switch (type) {
       case html: // return JSON for html requests
       case json:
-        return new NanoResponse(http_response_header, MIME_JSON, s.toJsonString());
+        return new NanoResponse(http_response_header, MIME_JSON, s.toJsonBytes());
       case xml:
         throw H2O.unimpl("Unknown type: " + type.toString());
       case java:
         if (s instanceof AssemblyV99) {
           // TODO: fix the AssemblyV99 response handler so that it produces the appropriate StreamingSchema
           Assembly ass = DKV.getGet(((AssemblyV99) s).assembly_id);
-          NanoResponse r = new NanoResponse(http_response_header, MIME_DEFAULT_BINARY, ass.toJava(((AssemblyV99) s).pojo_name));
-          r.addHeader("Content-Disposition", "attachment; filename=\""+JCodeGen.toJavaId(((AssemblyV99) s).pojo_name)+".java\"");
+          NanoResponse r = new NanoResponse(http_response_header, MIME_DEFAULT_BINARY, ass.toJava(((AssemblyV99) s).file_name));
+          r.addHeader("Content-Disposition", "attachment; filename=\""+JCodeGen.toJavaId(((AssemblyV99) s).file_name)+".java\"");
           return r;
         } else {
           throw new H2OIllegalArgumentException("Cannot generate java for type: " + s.getClass().getSimpleName());

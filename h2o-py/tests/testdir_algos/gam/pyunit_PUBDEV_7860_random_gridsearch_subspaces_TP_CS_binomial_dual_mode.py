@@ -1,5 +1,3 @@
-from __future__ import division
-from __future__ import print_function
 import sys
 sys.path.insert(1, "../../../")
 import h2o
@@ -20,19 +18,17 @@ def test_randomdiscrete_gridsearch():
     myX = names.remove(myY)
     search_criteria = {'strategy': 'RandomDiscrete', "seed": 1}
     hyper_parameters = {'lambda': [1, 2],
-                        'subspaces': [{'scale': [[0.001], [0.0002]], 'num_knots': [[5], [10]], 'bs':[[1], [0]], 
+                        'subspaces': [{'scale': [[0.001], [0.0002]], 'bs':[[1], [0]], 
                                        'gam_columns': [[["c_0"]], [["c_1"]]]},
                                       {'scale': [[0.001, 0.001, 0.001], [0.0002, 0.0002, 0.0002]], 
-                                       'bs':[[1, 1, 1], [0, 1, 1]], 
-                                       'num_knots': [[5, 10, 12], [6, 11, 13]], 
+                                       'bs':[[3, 1, 1], [0, 1, 1]], 
                                        'gam_columns': [[["c_0"], ["c_1", "c_2"], ["c_3", "c_4", "c_5"]],
                                                    [["c_1"], ["c_2", "c_3"], ["c_4", "c_5", "c_6"]]]}]}
     hyper_parameters2 = {'lambda': [1, 2],
-                        'subspaces': [{'scale': [[0.001], [0.0002]], 'num_knots': [[5], [10]], 'bs':[[1], [0]],
-                                       'gam_columns': [[["c_0"]], [["c_1"]]]},
+                        'subspaces': [{'scale': [[0.001], [0.0002]], 'bs':[[1], [0]],
+                                       'gam_columns': [["c_0"], ["c_1"]]},
                                       {'scale': [[0.001, 0.001, 0.001], [0.0002, 0.0002, 0.0002]],
-                                       'bs':[[1, 1, 1], [0, 1, 1]],
-                                       'num_knots': [[5, 10, 12], [6, 11, 13]],
+                                       'bs':[[3, 1, 1], [0, 1, 1]],
                                        'gam_columns': [["c_0", ["c_1", "c_2"], ["c_3", "c_4", "c_5"]],
                                                        ["c_1", ["c_2", "c_3"], ["c_4", "c_5", "c_6"]]]}]}
     h2o_model = H2OGridSearch(H2OGeneralizedAdditiveEstimator(family="binomial", keep_gam_cols=True), 

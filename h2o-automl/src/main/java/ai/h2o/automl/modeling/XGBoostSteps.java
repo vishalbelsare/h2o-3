@@ -15,6 +15,7 @@ import water.Job;
 import water.Key;
 
 import java.util.*;
+import java.util.stream.IntStream;
 
 public class XGBoostSteps extends ModelingSteps {
 
@@ -27,11 +28,6 @@ public class XGBoostSteps extends ModelingSteps {
             params._tree_method = XGBoostParameters.TreeMethod.hist;
             params._grow_policy = XGBoostParameters.GrowPolicy.lossguide;
         }
-
-        // setDistribution: no way to identify gaussian, poisson, laplace? using descriptive statistics?
-        params._distribution = aml.getResponseColumn().isBinary() && !(aml.getResponseColumn().isNumeric()) ? DistributionFamily.bernoulli
-                : aml.getResponseColumn().isCategorical() ? DistributionFamily.multinomial
-                : DistributionFamily.AUTO;
 
         params._score_tree_interval = 5;
         params._ntrees = 10000;
@@ -199,7 +195,7 @@ public class XGBoostSteps extends ModelingSteps {
             searchParams.put("_col_sample_rate_per_tree", new Double[]{0.7, 0.8, 0.9, 1.0}); // = _colsample_bytree: start higher to always use at least about 40% of columns
 //            searchParams.put("_min_split_improvement", new Float[]{0.01f, 0.05f, 0.1f, 0.5f, 1f, 5f, 10f, 50f}); // = _gamma
 //            searchParams.put("_tree_method", new XGBoostParameters.TreeMethod[]{XGBoostParameters.TreeMethod.auto});
-            searchParams.put("_booster", new XGBoostParameters.Booster[]{ // include gblinear? cf. https://0xdata.atlassian.net/browse/PUBDEV-7254
+            searchParams.put("_booster", new XGBoostParameters.Booster[]{ // include gblinear? cf. https://github.com/h2oai/h2o-3/issues/8381
                     XGBoostParameters.Booster.gbtree, //default, let's use it more often: note that some combinations may be trained multiple time by the RGS then.
                     XGBoostParameters.Booster.gbtree,
                     XGBoostParameters.Booster.dart
@@ -220,8 +216,51 @@ public class XGBoostSteps extends ModelingSteps {
 
     }
 
+    static class XGBoostGBLinearGridStep extends XGBoostGridStep {
+        
+        public XGBoostGBLinearGridStep(String id, AutoML autoML) {
+            super(id, autoML, false);
+        }
+
+
+        @Override
+        public XGBoostParameters prepareModelParameters() {
+            return XGBoostSteps.prepareModelParameters(aml(), false);
+        }
+
+        @Override
+        public Map<String, Object[]> prepareSearchParameters() {
+            Map<String, Object[]> searchParams = new HashMap<>();
+
+            /* 
+            // not supported/exposed in our xgboost yet
+            if (aml().getBuildSpec().build_control.isReproducible()) {
+                searchParams.put("_updater", new String[] {"coord_descent"});
+                searchParams.put("_feature_selector", new String[] {"cyclic", "greedy"});  // TODO: check if others are deterministic
+                            } else {
+                searchParams.put("_updater", new String[] {"shotgun", "coord_descent"});
+                searchParams.put("_feature_selector", new String[] {"cyclic", "shuffle", "random", "greedy", "thrifty"});
+            }
+            int ncols = aml().getTrainingFrame().numCols() - (aml().getBuildSpec().getNonPredictors().length +
+                    (aml().getBuildSpec().input_spec.ignored_columns != null ? aml().getBuildSpec().input_spec.ignored_columns.length : 0));
+
+            searchParams.put("_top_k", IntStream.range(0, ncols-1).boxed().toArray(Integer[]::new));
+            */
+            
+            searchParams.put("_booster", new XGBoostParameters.Booster[]{ XGBoostParameters.Booster.gblinear });
+
+            searchParams.put("_reg_lambda", new Float[]{0.001f, 0.01f, 0.1f, 1f, 10f, 100f});
+            searchParams.put("_reg_alpha", new Float[]{0.001f, 0.01f, 0.1f, 0.5f, 1f});
+            
+            return searchParams;
+        }
+
+    }
+
     private final ModelingStep[] grids = new XGBoostGridStep[] {
             new DefaultXGBoostGridStep("grid_1", aml()),
+            new XGBoostGBLinearGridStep("grid_gblinear", aml()),
+
 /*
             new DefaultXGBoostGridStep("grid_1_resume", aml()) {
                 @Override

@@ -6,11 +6,19 @@
 """Shared utilities used by various classes, all placed here to avoid circular imports.
 
 This file INTENTIONALLY has NO module dependencies!
+
+TODO: clean up this file that turned into a waste bin over the years:
+- split this into more specific modules.
+- utility modules should have a specific name to limit the scope of the garbage we put in (like waste sorting).
+- utility modules should if possible be placed under appropriate parent module 
+  (e.g. model/mojo related utility functions should go under h2o.model)
+- utility functions used ONLY in tests should go to test utilities! no reason to export those to end users!
+- same for model_utils.py nearby
 """
-from __future__ import absolute_import, division, print_function, unicode_literals
 from .compatibility import *  # NOQA
 
 import csv
+import contextlib
 import io
 import itertools
 import os
@@ -22,9 +30,24 @@ import sys
 import tempfile
 import zipfile
 
+
+try:
+    from contextlib import AbstractContextManager
+except ImportError:
+    import abc
+    
+    class AbstractContextManager(metaclass=abc.ABCMeta):
+        @classmethod
+        def __subclasshook__(cls, C):
+            if cls is AbstractContextManager:
+                return all(any(m in SC.__dict__ for SC in C.__mro__) for m in ("__enter__", "__exit__"))
+            return NotImplemented
+
+
 from h2o.backend.server import H2OLocalServer
 from h2o.exceptions import H2OValueError
 from h2o.utils.typechecks import assert_is_type, is_type, numeric
+from h2o.utils.threading import local_env
 
 _id_ctr = 0
 
@@ -34,6 +57,38 @@ _id_ctr = 0
 _id_allowed_characters = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
 
 __all__ = ('mojo_predict_csv', 'mojo_predict_pandas')
+
+
+class List(list):
+    """a list accepting attributes"""
+    pass
+
+
+class LookupSeq(tuple):
+    """
+    An immutable sequence implementation (actually a tuple) optimized for fast lookups.
+    Some code needs both random/indexed access on large lists and do many lookups `elem in my_list` (e.g. in a loop),
+    it is recommended to use this class in that case to avoid forgetting to build or use a set every time we need a lookup. 
+    
+    Note that this list is read-only as we don't want to have to synchronize the backed set used for the lookups.
+    """
+    def __new__(cls, seq=()):
+        """need to implement  __new__ to be able to extend tuple (not necessary for list)"""
+        return super(LookupSeq, cls).__new__(cls, seq)
+    
+    def __init__(self, seq=()):
+        self.__set = frozenset(self)  # lookup functions backed by a set
+        
+    def __contains__(self, item):
+        return item in self.__set
+    
+    def set(self):
+        """
+        use this for arithmetic operations on the elements to avoid confusion.
+        We still want this to behave like a list for the most part, 
+        and this is slightly faster than building a set from the list itself.
+        """
+        return self.__set
 
 
 def _py_tmp_key(append):
@@ -66,22 +121,37 @@ def temp_ctr():
 
 
 def is_module_available(mod):
+    if local_env(mod+"_disabled"):  # fast track if module is explicitly disabled
+        return False
     if mod in sys.modules and sys.modules[mod] is not None:  # fast track + safer in unusual environments 
         return True
-    if PY2:
-        import imp
-        try:
-            imp.find_module(mod)
-            return True
-        except ImportError:
-            return False
         
     import importlib.util
     return importlib.util.find_spec(mod) is not None
 
 
+def is_module_enabled(mod):
+    return local_env(mod+"_enabled") and is_module_available(mod)
+
+
 def can_use_pandas():
     return is_module_available('pandas')
+
+def can_install_polars():
+    return sys.version_info.major == 3 and sys.version_info.minor >= 6
+
+
+def can_use_polars():
+    return is_module_enabled('polars') and sys.version_info.major == 3 and sys.version_info.minor >= 6
+
+
+def can_use_pyarrow():
+    if can_use_pandas() and sys.version_info.minor >= 6:
+        import pandas
+        return is_module_available('pyarrow') and sys.version_info.major == 3 and sys.version_info.minor >= 6 and \
+               float(pandas.__version__[0]) >= 1
+    else:
+        return False
 
 
 def can_use_numpy():
@@ -96,56 +166,15 @@ def url_encode(s):
     # Note: type cast str(s) will not be needed once all code is made compatible
     return "".join(_url_chars_map[c] for c in bytes_iterator(s))
 
-
 def quote(s):
     return url_encode(s)
-
 
 def clamp(x, xmin, xmax):
     """Return the value of x, clamped from below by `xmin` and from above by `xmax`."""
     return max(xmin, min(x, xmax))
 
-
 def _gen_header(cols):
     return ["C" + str(c) for c in range(1, cols + 1, 1)]
-
-
-def _check_lists_of_lists(python_obj):
-    # check we have a lists of flat lists
-    # returns longest length of sublist
-    most_cols = 1
-    for l in python_obj:
-        # All items in the list must be a list!
-        if not isinstance(l, (tuple, list)):
-            raise ValueError("`python_obj` is a mixture of nested lists and other types.")
-        most_cols = max(most_cols, len(l))
-        for ll in l:
-            # in fact, we must have a list of flat lists!
-            if isinstance(ll, (tuple, list)):
-                raise ValueError("`python_obj` is not a list of flat lists!")
-    return most_cols
-
-
-def _handle_python_lists(python_obj, check_header):
-    # convert all inputs to lol
-    if _is_list_of_lists(python_obj):  # do we have a list of lists: [[...], ..., [...]] ?
-        ncols = _check_lists_of_lists(python_obj)  # must be a list of flat lists, raise ValueError if not
-    elif isinstance(python_obj, (list, tuple)):  # single list
-        ncols = 1
-        python_obj = [[e] for e in python_obj]
-    else:  # scalar
-        python_obj = [[python_obj]]
-        ncols = 1
-    # create the header
-    if check_header == 1:
-        header = python_obj[0]
-        python_obj = python_obj[1:]
-    else:
-        header = _gen_header(ncols)
-    # shape up the data for csv.DictWriter
-    # data_to_write = [dict(list(zip(header, row))) for row in python_obj]
-    return header, python_obj
-
 
 def stringify_dict(d):
     return stringify_list(["{'key': %s, 'value': %s}" % (_quoted(k), v) for k, v in d.items()])
@@ -191,38 +220,6 @@ def _is_num_list(l):
 
 def _is_list_of_lists(o):
     return any(isinstance(l, (tuple, list)) for l in o)
-
-
-def _handle_numpy_array(python_obj, header):
-    return _handle_python_lists(python_obj.tolist(), header)
-
-
-def _handle_pandas_data_frame(python_obj, header):
-    data = _handle_python_lists(python_obj.values.tolist(), -1)[1]
-    return list(str(c) for c in python_obj.columns), data
-
-
-def _handle_python_dicts(python_obj, check_header):
-    header = list(python_obj.keys()) if python_obj else _gen_header(1)
-    is_valid = all(re.match(r"^[a-zA-Z_][a-zA-Z0-9_.]*$", col) for col in header)  # is this a valid header?
-    if not is_valid:
-        raise ValueError(
-            "Did not get a valid set of column names! Must match the regular expression: ^[a-zA-Z_][a-zA-Z0-9_.]*$ ")
-    for k in python_obj:  # check that each value entry is a flat list/tuple or single int, float, or string
-        v = python_obj[k]
-        if isinstance(v, (tuple, list)):  # if value is a tuple/list, then it must be flat
-            if _is_list_of_lists(v):
-                raise ValueError("Values in the dictionary must be flattened!")
-        elif is_type(v, str, numeric):
-            python_obj[k] = [v]
-        else:
-            raise ValueError("Encountered invalid dictionary value when constructing H2OFrame. Got: {0}".format(v))
-
-    zipper = getattr(itertools, "zip_longest", None) or getattr(itertools, "izip_longest", None) or zip
-    rows = list(map(list, zipper(*list(python_obj.values()))))
-    data_to_write = [dict(list(zip(header, row))) for row in rows]
-    return header, data_to_write
-
 
 def _is_fr(o):
     return o.__class__.__name__ == "H2OFrame"  # hack to avoid circular imports
@@ -349,16 +346,6 @@ def get_human_readable_time(time_ms):
     return res.strip()
 
 
-def print2(msg, flush=False, end="\n"):
-    """
-    This function exists here ONLY because Sphinx.ext.autodoc gets into a bad state when seeing the print()
-    function. When in that state, autodoc doesn't display any errors or warnings, but instead completely
-    ignores the "bysource" member-order option.
-    """
-    print(msg, end=end)
-    if flush: sys.stdout.flush()
-
-
 def normalize_slice(s, total):
     """
     Return a "canonical" version of slice ``s``.
@@ -384,21 +371,16 @@ locate = _locate
 quoted = _quoted
 is_list = _is_list
 is_fr = _is_fr
-handle_python_dicts = _handle_python_dicts
-handle_pandas_data_frame = _handle_pandas_data_frame
-handle_numpy_array = _handle_numpy_array
 is_list_of_lists = _is_list_of_lists
 is_num_list = _is_num_list
 is_str_list = _is_str_list
-handle_python_lists = _handle_python_lists
-check_lists_of_lists = _check_lists_of_lists
 
 gen_model_file_name = "h2o-genmodel.jar"
 h2o_predictor_class = "hex.genmodel.tools.PredictCsv"
 
 
 def mojo_predict_pandas(dataframe, mojo_zip_path, genmodel_jar_path=None, classpath=None, java_options=None, 
-                        verbose=False, setInvNumNA=False, predict_contributions=False):
+                        verbose=False, setInvNumNA=False, predict_contributions=False, predict_calibrated=False):
     """
     MOJO scoring function to take a Pandas frame and use MOJO model as zip file to score.
 
@@ -412,6 +394,7 @@ def mojo_predict_pandas(dataframe, mojo_zip_path, genmodel_jar_path=None, classp
     :param verbose: Optional, if True, then additional debug information will be printed. False by default.
     :param predict_contributions: if True, then return prediction contributions instead of regular predictions 
         (only for tree-based models).
+    :param predict_calibrated: if true, then return calibrated probabilities in addition to the predicted probabilities.
     :return: Pandas frame with predictions
     """
     tmp_dir = tempfile.mkdtemp()
@@ -426,14 +409,16 @@ def mojo_predict_pandas(dataframe, mojo_zip_path, genmodel_jar_path=None, classp
         mojo_predict_csv(input_csv_path=input_csv_path, mojo_zip_path=mojo_zip_path,
                          output_csv_path=prediction_csv_path, genmodel_jar_path=genmodel_jar_path,
                          classpath=classpath, java_options=java_options, verbose=verbose, setInvNumNA=setInvNumNA,
-                         predict_contributions=predict_contributions)
+                         predict_contributions=predict_contributions, predict_calibrated=predict_calibrated)
         return pandas.read_csv(prediction_csv_path)
     finally:
         shutil.rmtree(tmp_dir)
 
 
 def mojo_predict_csv(input_csv_path, mojo_zip_path, output_csv_path=None, genmodel_jar_path=None, classpath=None, 
-                     java_options=None, verbose=False, setInvNumNA=False, predict_contributions=False):
+                     java_options=None, verbose=False, setInvNumNA=False, 
+                     predict_contributions=False, predict_calibrated=False,
+                     extra_cmd_args=None):
     """
     MOJO scoring function to take a CSV file and use MOJO model as zip file to score.
 
@@ -449,6 +434,8 @@ def mojo_predict_csv(input_csv_path, mojo_zip_path, output_csv_path=None, genmod
     :param verbose: Optional, if True, then additional debug information will be printed. False by default.
     :param predict_contributions: if True, then return prediction contributions instead of regular predictions 
         (only for tree-based models).
+    :param predict_calibrated: if true, then return calibrated probabilities in addition to the predicted probabilities.
+    :param extra_cmd_args: Optional, a list of additional arguments to append to genmodel.jar's command line. 
     :return: List of computed predictions
     """
     default_java_options = '-Xmx4g -XX:ReservedCodeCacheSize=256m'
@@ -513,13 +500,22 @@ def mojo_predict_csv(input_csv_path, mojo_zip_path, output_csv_path=None, genmod
     if predict_contributions:
         cmd.append('--predictContributions')
 
+    if predict_calibrated:
+        cmd.append('--predictCalibrated')
+
+    if extra_cmd_args:
+        cmd += extra_cmd_args
+
     if verbose:
         cmd_str = " ".join(cmd)
         print("java cmd:\t%s" % cmd_str)
-               
 
+    stdout = subprocess.DEVNULL
+    if verbose:
+        stdout = None
+        
     # invoke the command
-    subprocess.check_call(cmd, shell=False)
+    subprocess.check_call(cmd, shell=False, stdout=stdout)
 
     # load predictions in form of a dict
     with open(output_csv_path) as csv_file:
@@ -553,3 +549,12 @@ class InMemoryZipArch(object):
         if self._file_name is None:
             return
         self.write_to_file(self._file_name)
+
+
+@contextlib.contextmanager
+def as_resource(o):
+    if isinstance(o, AbstractContextManager):
+        with o as res:
+            yield res
+    else:
+        yield o

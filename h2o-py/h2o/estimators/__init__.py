@@ -7,9 +7,11 @@
 import inspect
 import sys
 
+from .adaboost import H2OAdaBoostEstimator
 from .aggregator import H2OAggregatorEstimator
 from .anovaglm import H2OANOVAGLMEstimator
 from .coxph import H2OCoxProportionalHazardsEstimator
+from .decision_tree import H2ODecisionTreeEstimator
 from .deeplearning import H2OAutoEncoderEstimator
 from .deeplearning import H2ODeepLearningEstimator
 from .estimator_base import H2OEstimator
@@ -19,9 +21,12 @@ from .gbm import H2OGradientBoostingEstimator
 from .generic import H2OGenericEstimator
 from .glm import H2OGeneralizedLinearEstimator
 from .glrm import H2OGeneralizedLowRankEstimator
+from .hglm import H2OHGLMEstimator
+from .infogram import H2OInfogram
 from .isolation_forest import H2OIsolationForestEstimator
+from .isotonicregression import H2OIsotonicRegressionEstimator
 from .kmeans import H2OKMeansEstimator
-from .maxrglm import H2OMaxRGLMEstimator
+from .model_selection import H2OModelSelectionEstimator
 from .naive_bayes import H2ONaiveBayesEstimator
 from .pca import H2OPrincipalComponentAnalysisEstimator
 from .psvm import H2OSupportVectorMachineEstimator
@@ -57,11 +62,12 @@ def create_estimator(algo, **params):
 
 __all__ = (
     "create_estimator",
-    "H2OAggregatorEstimator", "H2OANOVAGLMEstimator", "H2OCoxProportionalHazardsEstimator", "H2OAutoEncoderEstimator",
-    "H2ODeepLearningEstimator", "H2OEstimator", "H2OExtendedIsolationForestEstimator",
-    "H2OGeneralizedAdditiveEstimator", "H2OGradientBoostingEstimator", "H2OGenericEstimator",
-    "H2OGeneralizedLinearEstimator", "H2OGeneralizedLowRankEstimator", "H2OIsolationForestEstimator",
-    "H2OKMeansEstimator", "H2OMaxRGLMEstimator", "H2ONaiveBayesEstimator", "H2OPrincipalComponentAnalysisEstimator",
+    "H2OAdaBoostEstimator", "H2OAggregatorEstimator", "H2OANOVAGLMEstimator", "H2OCoxProportionalHazardsEstimator",
+    "H2ODecisionTreeEstimator", "H2OAutoEncoderEstimator", "H2ODeepLearningEstimator", "H2OEstimator",
+    "H2OExtendedIsolationForestEstimator", "H2OGeneralizedAdditiveEstimator", "H2OGradientBoostingEstimator",
+    "H2OGenericEstimator", "H2OGeneralizedLinearEstimator", "H2OGeneralizedLowRankEstimator", "H2OHGLMEstimator",
+    "H2OInfogram", "H2OIsolationForestEstimator", "H2OIsotonicRegressionEstimator", "H2OKMeansEstimator",
+    "H2OModelSelectionEstimator", "H2ONaiveBayesEstimator", "H2OPrincipalComponentAnalysisEstimator",
     "H2OSupportVectorMachineEstimator", "H2ORandomForestEstimator", "H2ORuleFitEstimator",
     "H2OStackedEnsembleEstimator", "H2OSingularValueDecompositionEstimator", "H2OTargetEncoderEstimator",
     "H2OUpliftRandomForestEstimator", "H2OWord2vecEstimator", "H2OXGBoostEstimator"

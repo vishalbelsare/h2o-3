@@ -32,10 +32,7 @@ import water.parser.ParseDataset;
 import water.parser.ParseSetup;
 import water.util.*;
 
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.io.IOException;
+import java.io.*;
 import java.lang.reflect.Array;
 import java.nio.charset.Charset;
 import java.util.*;
@@ -1033,7 +1030,8 @@ public class GBMTest extends TestUtil {
     }
   }
 
-  // HEXDEV-194: Check reproducibility for the same # of chunks (i.e., same # of nodes) and same parameters
+  // GH issue https://github.com/h2oai/private-h2o-3/issues/480: Check reproducibility for the same # of
+  // chunks (i.e., same # of nodes) and same parameters
   @Test public void testReprodubility() {
     Frame tfr=null;
     final int N = 5;
@@ -1206,7 +1204,7 @@ public class GBMTest extends TestUtil {
       assertEquals(0.21694215729861027, mse, 1e-8); //check for the same result on 1 nodes and 5 nodes (will only work with enough chunks)
   }
 
-  // HEXDEV-223
+  // GH issue: https://github.com/h2oai/private-h2o-3/issues/457
   @Test public void testCategorical() {
     Frame tfr=null;
     final int N = 1;
@@ -2521,12 +2519,12 @@ public class GBMTest extends TestUtil {
     Log.info(df);
     Log.info(preds);
     Assert.assertTrue(gbm.testJavaScoring(df,preds,1e-15));
-    Assert.assertTrue(preds.vec(0).at(0) == 10);
-    Assert.assertTrue(preds.vec(0).at(1) == 0);
-    Assert.assertTrue(preds.vec(0).at(2) == 0);
-    Assert.assertTrue(preds.vec(0).at(3) == 0);
-    Assert.assertTrue(preds.vec(0).at(4) == 10);
-    Assert.assertTrue(preds.vec(0).at(5) == 10);
+    assertEquals(10, preds.vec(0).at(0), 0);
+    assertEquals(0, preds.vec(0).at(1), 0);
+    assertEquals(0, preds.vec(0).at(2), 0);
+    assertEquals(0, preds.vec(0).at(3), 0);
+    assertEquals(10, preds.vec(0).at(4), 0);
+    assertEquals(10, preds.vec(0).at(5), 0);
     preds.remove();
     gbm.remove();
     df.remove();
@@ -2549,12 +2547,12 @@ public class GBMTest extends TestUtil {
     Log.info(df);
     Log.info(preds);
     Assert.assertTrue(gbm.testJavaScoring(df,preds,1e-15));
-    Assert.assertTrue(Math.abs(preds.vec(0).at(0) - 0) < 1e-6);
-    Assert.assertTrue(Math.abs(preds.vec(0).at(1) - 0) < 1e-6);
-    Assert.assertTrue(Math.abs(preds.vec(0).at(2) - 0) < 1e-6);
-    Assert.assertTrue(Math.abs(preds.vec(0).at(3) - 0) < 1e-6);
-    Assert.assertTrue(Math.abs(preds.vec(0).at(4) - 10) < 1e-6);
-    Assert.assertTrue(Math.abs(preds.vec(0).at(5) - 0) < 1e-6);
+    assertEquals(0, preds.vec(0).at(0), 1e-6);
+    assertEquals(0, preds.vec(0).at(1), 1e-6);
+    assertEquals(0, preds.vec(0).at(2), 1e-6);
+    assertEquals(0, preds.vec(0).at(3), 1e-6);
+    assertEquals(10, preds.vec(0).at(4), 1e-6);
+    assertEquals(0, preds.vec(0).at(5), 1e-6);
     preds.remove();
     gbm.remove();
     df.remove();
@@ -3146,7 +3144,7 @@ public class GBMTest extends TestUtil {
       // Build a POJO, validate same results
       Assert.assertTrue(gbm.testJavaScoring(pred, res, 1e-15));
       Assert.assertEquals( 1485, ((ModelMetricsRegression)gbm._output._training_metrics)._MSE,50);
-      Assert.assertTrue(Math.abs(((ModelMetricsRegression)gbm._output._training_metrics)._mean_residual_deviance - 256.88) < 1);
+      Assert.assertEquals(289, ((ModelMetricsRegression)gbm._output._training_metrics)._mean_residual_deviance, 1);
 
     } finally {
       parms._train.remove();
@@ -3289,7 +3287,7 @@ public class GBMTest extends TestUtil {
       gbm = new GBM(parms).trainModel().get();
 
       Assert.assertEquals(4.447062185,((ModelMetricsRegression)gbm._output._training_metrics)._MSE,1e-5);
-      Assert.assertEquals(1.962926332,((ModelMetricsRegression) gbm._output._training_metrics)._mean_residual_deviance,1e-4);
+      Assert.assertEquals(2.488248962,((ModelMetricsRegression) gbm._output._training_metrics)._mean_residual_deviance,1e-4);
 
     } finally {
       if (tfr != null) tfr.delete();
@@ -3316,7 +3314,7 @@ public class GBMTest extends TestUtil {
       gbm = new GBM(parms).trainModel().get();
 
       Assert.assertEquals(4.8056900203,((ModelMetricsRegression)gbm._output._training_metrics)._MSE,1e-5);
-      Assert.assertEquals(2.0080997,((ModelMetricsRegression) gbm._output._training_metrics)._mean_residual_deviance,1e-4);
+      Assert.assertEquals(2.5683696486,((ModelMetricsRegression) gbm._output._training_metrics)._mean_residual_deviance,1e-4);
 
     } finally {
       if (tfr != null) tfr.delete();
@@ -3734,7 +3732,7 @@ public class GBMTest extends TestUtil {
           model = new hex.tree.gbm.GBM(parms).trainModel().get();
           fail("Custom stopping " + " shouldn't work without a custom metric");
         } catch (H2OModelBuilderIllegalArgumentException e) {
-          if (e.getMessage() == null || !e.getMessage().contains("ERRR on field: _stopping_metric: " +
+          if (e.getMessage() == null || !e.getMessage().contains("ERRR on field: _custom_metric_func: " +
                   "Custom metric function needs to be defined in order to use it for early stopping.")) {
             throw e;
           }
@@ -3890,8 +3888,8 @@ public class GBMTest extends TestUtil {
 
       // compare training predictions of both models (just compare probs)
       if (preds!=null && preds2!=null) {
-        preds.remove(0);
-        preds2.remove(0);
+        Scope.track(preds.remove(0));
+        Scope.track(preds2.remove(0));
         System.out.println("Compare training predictions of both models (just compare probs)");
         assertIdenticalUpToRelTolerance(preds, preds2, 1e-2);
       }
@@ -3907,23 +3905,18 @@ public class GBMTest extends TestUtil {
       if (fr4!=null) fr4.delete();
       if (fr5!=null) fr5.delete();
       if(model != null){
-        model.deleteCrossValidationModels();
         model.delete();
       }
       if(model2 != null){
-        model2.deleteCrossValidationModels();
         model2.delete();
       }
       if(model3 != null){
-        model3.deleteCrossValidationModels();
         model3.delete();
       }
       if(model4 != null){
-        model4.deleteCrossValidationModels();
         model4.delete();
       }
       if(model5 != null){
-        model5.deleteCrossValidationModels();
         model5.delete();
       }
       Scope.exit();
@@ -4012,6 +4005,58 @@ public class GBMTest extends TestUtil {
       
     } finally {
       Scope.exit();
+    }
+  }
+
+  @Test public void testMonotoneConstraintsBernoulliCheck() {
+    Scope.enter();
+    try {
+      Frame train = Scope.track(parseTestFile("smalldata/gbm_test/ecology_model.csv"));
+      train.remove("Site").remove();     // Remove unique ID
+      int ci = train.find("Angaus");
+      Scope.track(train.replace(ci, train.vecs()[ci].toCategoricalVec()));   // Convert response 'Angaus' to categorical
+      DKV.put(train);                    // Update frame after hacking it
+
+      String colName = "SegSumT";
+
+      GBMModel.GBMParameters parms = makeGBMParameters();
+      parms._train = train._key;
+      parms._response_column = "Angaus"; // Train on the outcome
+      parms._distribution = DistributionFamily.bernoulli;
+      parms._monotone_constraints = new KeyValue[]{new KeyValue(colName, 1)};
+      parms._ntrees = 3;
+
+      System.setProperty("sys.ai.h2o.tree.constraintConsistencyCheck", "true");
+      GBMModel model = Scope.track_generic(new GBM(parms).trainModel().get());
+      Scope.track_generic(model);
+
+      String[] uniqueValues = Scope.track(train.vec(colName).toCategoricalVec()).domain();
+      Vec unchangedPreds = Scope.track(model.score(train)).anyVec();
+      Vec lastPreds = null;
+      for (String valueStr : uniqueValues) {
+        final double value = Double.parseDouble(valueStr);
+
+        new MRTask() {
+          @Override
+          public void map(Chunk c) {
+            for (int i = 0; i < c._len; i++)
+              c.set(i, value);
+          }
+        }.doAll(train.vec(colName));
+        assertEquals(value, train.vec(colName).min(), 0);
+        assertEquals(value, train.vec(colName).max(), 0);
+
+        Vec currentPreds = Scope.track(model.score(train)).anyVec();
+        if (lastPreds != null)
+          for (int i = 0; i < lastPreds.length(); i++) {
+            assertTrue("value=" + value + ", id=" + i, lastPreds.at(i) <= currentPreds.at(i));
+            System.out.println("value=" + value + ", id="+ i +" "+lastPreds.at(i) +" <= "+currentPreds.at(i)+" - "+unchangedPreds.at(i));
+          }
+        lastPreds = currentPreds;
+      }
+    } finally {
+      Scope.exit();
+      System.clearProperty("sys.ai.h2o.tree.constraintConsistencyCheck");
     }
   }
 
@@ -4456,6 +4501,53 @@ public class GBMTest extends TestUtil {
         gbm.deleteCrossValidationModels();
         gbm.deleteCrossValidationPreds();
       }
+      Scope.exit();
+    }
+  }
+
+  @Test
+  public void testMojoMetrics() throws Exception {
+    GBMModel gbm = null;
+    try {
+      Scope.enter();
+      Frame frame = new TestFrameBuilder()
+              .withName("data")
+              .withColNames("ColA", "ColB", "Response")
+              .withVecTypes(Vec.T_NUM, Vec.T_NUM, Vec.T_NUM)
+              .withDataForCol(0, ard(0, 1, 0, 1, 0, 1, 0))
+              .withDataForCol(1, ard(Double.NaN, 1, 2, 3, 4, 5.6, 7))
+              .withDataForCol(2, ard(1, 0, 1, 1, 1, 0, 1))
+              .build();
+
+      frame = frame.toCategoricalCol(2);
+
+      Frame frameVal = new TestFrameBuilder()
+              .withName("dataVal")
+              .withColNames("ColA", "ColB", "Response")
+              .withVecTypes(Vec.T_NUM, Vec.T_NUM, Vec.T_NUM)
+              .withDataForCol(0, ard(0, 1, 1, 1, 0, 0, 1))
+              .withDataForCol(1, ard(Double.NaN, 1, 3, 2, 4, 8, 7))
+              .withDataForCol(2, ard(1, 1, 1, 0, 0, 1, 1))
+              .build();
+
+      frameVal = frameVal.toCategoricalCol(2);
+
+      GBMModel.GBMParameters parms = new GBMModel.GBMParameters();
+      parms._train = frame._key;
+      parms._valid = frameVal._key;
+      parms._response_column = "Response";
+      parms._ntrees = 1;
+      parms._min_rows = 0.1;
+      parms._distribution = bernoulli;
+
+      gbm = new GBM(parms).trainModel().get();
+      Scope.track_generic(gbm);
+      Frame train_score = gbm.score(frame);
+      Scope.track(train_score);
+      
+      assertTrue(gbm.testJavaScoring(frame, train_score, 1e-15));
+
+    } finally {
       Scope.exit();
     }
   }
@@ -5026,4 +5118,159 @@ public class GBMTest extends TestUtil {
     }
   }
 
+  /**
+   * Creates a frame with 
+   *  - completely random column
+   *  - predictor column that perfectly predicts response
+   *  - response with values [0, 1]
+   * 
+   * @return frame instance (tracked in Scope)
+   */
+  private Frame makeFrameForUniformRobustTesting(double outlierScale) {
+    Random r = RandomUtils.getRNG(42);
+    final int N = 100;
+
+    double[] randomCol = new double[N];
+    double[] perfectPredictor = new double[N];
+    double[] response = new double[N];
+
+    for (int i = 0; i < N; i++) {
+      randomCol[i] = r.nextDouble();
+      perfectPredictor[i]  = i / (double) N;
+      response[i] = perfectPredictor[i];
+    }
+
+    // inject outliers
+    perfectPredictor[0  ] = -outlierScale;
+    perfectPredictor[N-1] =  outlierScale;
+
+    return new TestFrameBuilder()
+            .withName("data")
+            .withColNames("RandomCol", "PerfectPredictor", "Response")
+            .withVecTypes(Vec.T_NUM, Vec.T_NUM, Vec.T_NUM)
+            .withDataForCol(0, randomCol)
+            .withDataForCol(1, perfectPredictor)
+            .withDataForCol(2, response)
+            .build();
+  }
+  
+  @Test
+  public void testUniformRobust()  {
+    try {
+      Scope.enter();
+      Frame frame = makeFrameForUniformRobustTesting(1e3);
+
+      GBMModel.GBMParameters parmsDefault = new GBMModel.GBMParameters();
+      parmsDefault._train = frame._key;
+      parmsDefault._response_column = "Response";
+      parmsDefault._ntrees = 1;
+      parmsDefault._max_depth = 3;
+      parmsDefault._min_rows = 1;
+      parmsDefault._learn_rate = 1;
+      parmsDefault._distribution = gaussian;
+
+      GBMModel.GBMParameters parmsRobust = (GBMModel.GBMParameters) parmsDefault.clone();
+      parmsRobust._histogram_type = SharedTreeModel.SharedTreeParameters.HistogramType.UniformRobust;
+
+      GBMModel gbmDefault = new GBM(parmsDefault).trainModel().get();
+      assertNotNull(gbmDefault);
+      Scope.track_generic(gbmDefault);
+
+      SharedTreeSubgraph treeDefault = gbmDefault.getSharedTreeSubgraph(0, 0);
+      // UniformAdaptive finds signal in the RandomColumn
+      assertEquals(Arrays.asList(
+              "RandomCol",
+              "RandomCol", "RandomCol",
+              "RandomCol", "RandomCol", "RandomCol", "RandomCol"
+      ), getSplitCols(treeDefault));
+
+      GBMModel gbmRobust = new GBM(parmsRobust).trainModel().get();
+      assertNotNull(gbmRobust);
+      Scope.track_generic(gbmRobust);
+
+      SharedTreeSubgraph treeRobust = gbmRobust.getSharedTreeSubgraph(0, 0);
+      // UniformRobust still splits on the RandomColumn in the root but refined split-points kick on the next level
+      assertEquals(Arrays.asList(
+              "RandomCol",
+              "PerfectPredictor", "PerfectPredictor",
+              "PerfectPredictor", "PerfectPredictor", "PerfectPredictor", "PerfectPredictor"
+      ), getSplitCols(treeRobust));
+
+      // Compare MAE
+      assertEquals(0.2, ((ModelMetricsRegression) gbmDefault._output._training_metrics).mae(), 0.05);
+      assertEquals(0.05, ((ModelMetricsRegression) gbmRobust._output._training_metrics).mae(), 0.01);
+    } finally {
+      Scope.exit();
+    }
+  }
+
+  @Test
+  public void testUniformRobustNeedsMultipleRefinementsOfBinsForLargeOutliers()  {
+    try {
+      Scope.enter();
+      Frame frame = makeFrameForUniformRobustTesting(
+              1e6
+      );
+
+      GBMModel.GBMParameters p = new GBMModel.GBMParameters();
+      p._train = frame._key;
+      p._response_column = "Response";
+      p._ntrees = 1;
+      p._max_depth = 4;
+      p._min_rows = 1;
+      p._learn_rate = 1;
+      p._distribution = gaussian;
+      p._histogram_type = SharedTreeModel.SharedTreeParameters.HistogramType.UniformRobust;
+
+      GBMModel gbm = new GBM(p).trainModel().get();
+      assertNotNull(gbm);
+      Scope.track_generic(gbm);
+
+      SharedTreeSubgraph treeRobust = gbm.getSharedTreeSubgraph(0, 0);
+
+      // It takes 2 iterations of split-points refinement to get useful split-points
+      String splits = printTree(treeRobust);
+      assertEquals(String.join("\n",
+              "-> RandomCol",
+              "    -> RandomCol",
+              "        -> PerfectPredictor",
+              "            -> PerfectPredictor",
+              "            -> PerfectPredictor",
+              "        -> RandomCol",
+              "    -> RandomCol",
+              "        -> PerfectPredictor",
+              "            -> PerfectPredictor",
+              "            -> PerfectPredictor",
+              "        -> PerfectPredictor",
+              "            -> PerfectPredictor",
+              "            -> PerfectPredictor",
+              ""), splits);
+    } finally {
+      Scope.exit();
+    }
+  }
+
+  private List<String> getSplitCols(SharedTreeSubgraph t) {
+    return t.nodesArray.stream()
+            .filter(n -> !n.isLeaf())
+            .map(SharedTreeNode::getColName)
+            .collect(Collectors.toList());
+  }
+
+  private String printTree(SharedTreeSubgraph t) {
+    StringBuilder sb = new StringBuilder();
+    printNode(t.rootNode, 0, sb);
+    return sb.toString();
+  }
+
+  private void printNode(SharedTreeNode n, int depth, StringBuilder sb) {
+    if (n.isLeaf())
+      return;
+    for (int i = 0; i < depth; i++)
+      sb.append("    ");
+    sb.append("-> ").append(n.getColName()).append('\n');
+    printNode(n.getLeftChild(), depth + 1, sb);
+    printNode(n.getRightChild(), depth + 1, sb);
+  }
+  
 }

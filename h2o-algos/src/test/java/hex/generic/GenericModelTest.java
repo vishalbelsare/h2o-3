@@ -2,6 +2,7 @@ package hex.generic;
 
 import hex.Model;
 import hex.ModelCategory;
+import hex.ModelMetrics;
 import hex.ModelMetricsBinomial;
 import hex.coxph.CoxPH;
 import hex.coxph.CoxPHModel;
@@ -10,6 +11,8 @@ import hex.deeplearning.DeepLearningModel;
 import hex.ensemble.Metalearner;
 import hex.ensemble.StackedEnsemble;
 import hex.ensemble.StackedEnsembleModel;
+import hex.gam.GAM;
+import hex.gam.GAMModel;
 import hex.glm.GLM;
 import hex.glm.GLMModel;
 import hex.rulefit.RuleFit;
@@ -22,6 +25,7 @@ import hex.tree.isofor.IsolationForest;
 import hex.tree.isofor.IsolationForestModel;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
+import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -129,7 +133,7 @@ public class GenericModelTest extends TestUtil {
             Scope.track_generic(genericModel);
 
             final Frame genericModelPredictions = genericModel.score(testFrame);
-            Scope.track_generic(genericModelPredictions);
+            Scope.track(genericModelPredictions);
             assertEquals(2691, genericModelPredictions.numRows());
 
             final boolean equallyScored = genericModel.testJavaScoring(testFrame, genericModelPredictions, 0);
@@ -177,14 +181,14 @@ public class GenericModelTest extends TestUtil {
             Scope.track_generic(genericModel);
 
             final Frame genericModelPredictions = genericModel.score(testFrame);
-            Scope.track_generic(genericModelPredictions);
+            Scope.track(genericModelPredictions);
             assertEquals(2691, genericModelPredictions.numRows());
 
             final boolean equallyScored = genericModel.testJavaScoring(testFrame, genericModelPredictions, 0);
             assertTrue(equallyScored);
 
             final Frame originalModelPredictions = model.score(testFrame);
-            Scope.track_generic(originalModelPredictions);
+            Scope.track(originalModelPredictions);
             assertTrue(TestUtil.compareFrames(genericModelPredictions, originalModelPredictions));
         } finally {
             Scope.exit();
@@ -267,7 +271,7 @@ public class GenericModelTest extends TestUtil {
             Scope.track_generic(genericModel);
 
             final Frame genericModelPredictions = genericModel.score(trainingFrame);
-            Scope.track_generic(genericModelPredictions);
+            Scope.track(genericModelPredictions);
 
             assertTrue(model.testJavaScoring(trainingFrame, genericModelPredictions, 1e-6));
         } finally {
@@ -307,7 +311,7 @@ public class GenericModelTest extends TestUtil {
             Scope.track_generic(genericModel);
 
             final Frame genericModelPredictions = genericModel.score(testFrame);
-            Scope.track_generic(genericModelPredictions);
+            Scope.track(genericModelPredictions);
             assertEquals(2691, genericModelPredictions.numRows());
 
             final boolean equallyScored = genericModel.testJavaScoring(testFrame, genericModelPredictions, 0);
@@ -355,7 +359,7 @@ public class GenericModelTest extends TestUtil {
             Scope.track_generic(genericModel);
 
             final Frame genericModelPredictions = genericModel.score(testFrame);
-            Scope.track_generic(genericModelPredictions);
+            Scope.track(genericModelPredictions);
             assertEquals(2691, genericModelPredictions.numRows());
 
             final boolean equallyScored = genericModel.testJavaScoring(testFrame, genericModelPredictions, 0);
@@ -400,7 +404,7 @@ public class GenericModelTest extends TestUtil {
             Scope.track_generic(genericModel);
 
             final Frame genericModelPredictions = genericModel.score(testFrame);
-            Scope.track_generic(genericModelPredictions);
+            Scope.track(genericModelPredictions);
             assertEquals(2691, genericModelPredictions.numRows());
 
             final boolean equallyScored = genericModel.testJavaScoring(testFrame, genericModelPredictions, 0);
@@ -703,7 +707,6 @@ public class GenericModelTest extends TestUtil {
             parms._train = trainingFrame._key;
             parms._distribution = AUTO;
             parms._response_column = trainingFrame._names[1];
-            parms._rand_family = new GLMModel.GLMParameters.Family[] {GLMModel.GLMParameters.Family.AUTO};
 
             GLM job = new GLM(parms);
             final GLMModel originalModel = job.trainModel().get();
@@ -887,7 +890,7 @@ public class GenericModelTest extends TestUtil {
         Scope.track_generic(genericModel);
 
         final Frame genericModelPredictions = genericModel.score(testFrame);
-        Scope.track_generic(genericModelPredictions);
+        Scope.track(genericModelPredictions);
         assertEquals(testFrame.numRows(), genericModelPredictions.numRows());
 
         final boolean equallyScored = genericModel.testJavaScoring(testFrame, genericModelPredictions, 0);
@@ -1320,6 +1323,7 @@ public class GenericModelTest extends TestUtil {
     public void testJavaScoring_gbm_binomial_pojo() throws Exception {
         try {
             Scope.enter();
+            System.setProperty("sys.ai.h2o.pojo.import.enabled", "true");
             // Create new GBM model
             final Frame trainingFrame = parseTestFile("./smalldata/testng/airlines_train.csv");
             Scope.track(trainingFrame);
@@ -1341,7 +1345,7 @@ public class GenericModelTest extends TestUtil {
             try (FileWriter wr = new FileWriter(pojoFile)) {
                 IOUtils.write(pojoCode, wr);
             }
-            
+
             GenericModel generic = Generic.importMojoModel(pojoFile.getAbsolutePath(), true);
             Scope.track_generic(generic);
 
@@ -1351,6 +1355,156 @@ public class GenericModelTest extends TestUtil {
             Scope.track(scoredGeneric);
 
             assertFrameEquals(scoredOriginal, scoredGeneric, 0);
+        } finally {
+            System.clearProperty("sys.ai.h2o.pojo.import.enabled");
+            Scope.exit();
+        }
+    }
+
+    @Test
+    public void testGAM_binomial() throws IOException {
+        final GAMModel.GAMParameters gamParameters = new GAMModel.GAMParameters();
+        gamParameters._family = GLMModel.GLMParameters.Family.binomial;
+        gamParameters._response_column = "CAPSULE";
+        gamParameters._seed = 0XFEED;
+        gamParameters._ignored_columns = new String[] {"ID"};
+        gamParameters._alpha = new double[]{0.5};
+        gamParameters._lambda_search = false;
+        gamParameters._gam_columns = new String[][]{{"AGE"}};
+
+        checkGAM(gamParameters, "./smalldata/prostate/prostate.csv");
+    }
+
+    @Test
+    public void testGAM_gaussian() throws IOException {
+        final GAMModel.GAMParameters gamParameters = new GAMModel.GAMParameters();
+        gamParameters._family = GLMModel.GLMParameters.Family.gaussian;
+        gamParameters._response_column = "C21";
+        gamParameters._seed = 0XFEED;
+        gamParameters._alpha = new double[]{0.0};
+        gamParameters._lambda = new double[]{0.0};
+        gamParameters._lambda_search = false;
+        gamParameters._gam_columns = new String[][]{{"C11"}, {"C12"}, {"C13"}};
+        gamParameters._max_iterations = 3;
+        gamParameters._scale = new double[]{1.0, 1.0, 1.0};
+
+        checkGAM(gamParameters, "./smalldata/glm_test/gaussian_20cols_10000Rows.csv", "C1", "C2");
+    }
+
+    @Test
+    public void testGAM_multinomial() throws IOException {
+        final GAMModel.GAMParameters gamParameters = new GAMModel.GAMParameters();
+        gamParameters._family = GLMModel.GLMParameters.Family.multinomial;
+        gamParameters._response_column = "C11";
+        gamParameters._seed = 0XFEED;
+        gamParameters._alpha = new double[]{0.0};
+        gamParameters._lambda = new double[]{0.0};
+        gamParameters._lambda_search = false;
+        gamParameters._gam_columns = new String[][]{{"C6"}, {"C7"}, {"C8"}};
+        gamParameters._max_iterations = 3;
+        gamParameters._scale = new double[]{1.0, 1.0, 1.0};
+
+        checkGAM(gamParameters, "./smalldata/glm_test/multinomial_10_classes_10_cols_10000_Rows_train.csv", "C1", "C2");
+    }
+
+    private void checkGAM(GAMModel.GAMParameters gamParameters, String dataset, String... catCols) throws IOException {
+        try {
+            Scope.enter();
+
+            final Frame trainingFrame = parseTestFile(dataset);
+            if (gamParameters._family == GLMModel.GLMParameters.Family.binomial || 
+                    gamParameters._family == GLMModel.GLMParameters.Family.multinomial) {
+                trainingFrame.toCategoricalCol(gamParameters._response_column);
+            }
+            for (String catCol : catCols) {
+                trainingFrame.toCategoricalCol(catCol);
+            }
+            Scope.track(trainingFrame);
+            gamParameters._train = trainingFrame._key;
+
+            // 0. Train a GAM model
+            final GAM gam = new GAM(gamParameters);
+            final GAMModel gamModel = gam.trainModel().get();
+            assertNotNull(gamModel);
+            Scope.track_generic(gamModel);
+
+            final Frame originalModelPredictions = gamModel.score(trainingFrame);
+            Scope.track(originalModelPredictions);
+
+            // 1. Sanity check - make sure MOJO is actually consistent with in-H2O predictions before go further
+            assertTrue(gamModel.testJavaScoring(trainingFrame, originalModelPredictions, 1e-6));
+
+            // 2. Import MOJO into a Generic model
+            final File mojoFile = File.createTempFile("mojo", "zip");
+            gamModel.getMojo().writeTo(new FileOutputStream(mojoFile));
+            GenericModel genericModel = Generic.importMojoModel(mojoFile.getAbsolutePath(), false);
+            Scope.track_generic(genericModel);
+            assertTrue(genericModel.hasBehavior(GenericModel.ModelBehavior.USE_MOJO_PREDICT));
+            
+            // 3. Score Generic model
+            final Frame genericModelPredictions = genericModel.score(trainingFrame);
+            Scope.track(genericModelPredictions);
+
+            // Compare - predictions should be almost identical (up to the same tolerance as in-H2O and MOJO model predictions)
+            assertTrue(TestUtil.compareFrames(genericModelPredictions, originalModelPredictions, 1e-6));
+
+            // for now, we just produce regular metrics (not GAM specific metrics)
+            Key<ModelMetrics>[] genericModelMetrics = genericModel._output.getModelMetrics();
+            assertTrue(genericModelMetrics.length > 0);
+            ModelMetrics mm = DKV.getGet(genericModelMetrics[0]);
+
+            assertEquals(gamModel._output._training_metrics._MSE, mm._MSE, 1e-6);
+            assertEquals(gamModel._output._training_metrics._nobs, mm._nobs, 1e-6);
+        } finally {
+            Scope.exit();
+        }
+    }
+
+    @Test
+    public void testAutoEncoderWithParametrizedEncoding() throws IOException {
+        try {
+            Scope.enter();
+            Frame train = TestUtil.parseAndTrackTestFile("smalldata/airlines/AirlinesTrain.csv.zip");
+
+            DeepLearningModel.DeepLearningParameters p = new DeepLearningModel.DeepLearningParameters();
+            p._train = train._key;
+            p._autoencoder = true;
+            p._seed = 0xDECAF;
+            p._hidden = new int[]{10, 5, 3};
+            p._adaptive_rate = true;
+            p._l1 = 1e-4;
+            p._activation = DeepLearningModel.DeepLearningParameters.Activation.Tanh;
+            p._max_w2 = 10;
+            p._train_samples_per_iteration = -1;
+            p._loss = DeepLearningModel.DeepLearningParameters.Loss.Huber;
+            p._epochs = 0.2;
+            p._force_load_balance = true;
+            p._score_training_samples = 0;
+            p._score_validation_samples = 0;
+            p._reproducible = true;
+            p._categorical_encoding = Model.Parameters.CategoricalEncodingScheme.Eigen;
+
+            DeepLearning dl = new DeepLearning(p);
+            DeepLearningModel autoencoder = dl.trainModel().get();
+            Assert.assertNotNull(autoencoder);
+            Scope.track_generic(autoencoder);
+
+            // first make sure MOJO predict works
+            Frame reconstructed = autoencoder.score(train);
+            Scope.track(reconstructed);
+            Assert.assertTrue(autoencoder.testJavaScoring(train, reconstructed, 1e-6));
+
+            File mojoFile = temporaryFolder.newFile();
+            URI mojoURI = autoencoder.exportMojo(mojoFile.getAbsolutePath(), true);
+
+            // now check that imported AE mojo produces the same results as original model
+            GenericModel genericAE = Generic.importMojoModel(mojoURI);
+            assertNotNull(genericAE);
+            Scope.track_generic(genericAE);
+
+            Frame reconstructedAE = genericAE.score(train);
+            Scope.track(reconstructedAE);
+            assertFrameEquals(reconstructed, reconstructedAE, 1e-6);
         } finally {
             Scope.exit();
         }

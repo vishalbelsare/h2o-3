@@ -3,8 +3,6 @@ package hex.ensemble;
 import hex.*;
 import hex.genmodel.utils.DistributionFamily;
 import hex.genmodel.utils.LinkFunctionType;
-import hex.glm.GLMModel;
-import hex.tree.drf.DRFModel;
 import water.*;
 import water.exceptions.H2OIllegalArgumentException;
 import water.fvec.Chunk;
@@ -14,26 +12,311 @@ import water.fvec.Vec;
 import water.udf.CFuncRef;
 import water.util.Log;
 import water.util.MRUtils;
-import water.util.ReflectionUtils;
+import water.util.TwoDimTable;
+import water.util.fp.Function2;
 
-import java.lang.reflect.Field;
-import java.util.Arrays;
-import java.util.HashSet;
+import java.util.*;
 import java.util.stream.Stream;
 
+import static hex.Model.Contributions.ContributionsOutputFormat.Original;
 import static hex.Model.Parameters.FoldAssignmentScheme.AUTO;
 import static hex.Model.Parameters.FoldAssignmentScheme.Random;
 
 /**
  * An ensemble of other models, created by <i>stacking</i> with the SuperLearner algorithm or a variation.
  */
-public class StackedEnsembleModel extends Model<StackedEnsembleModel,StackedEnsembleModel.StackedEnsembleParameters,StackedEnsembleModel.StackedEnsembleOutput> {
+public class StackedEnsembleModel 
+        extends Model<StackedEnsembleModel,StackedEnsembleModel.StackedEnsembleParameters,StackedEnsembleModel.StackedEnsembleOutput> 
+        implements Model.Contributions{
 
   // common parameters for the base models (keeping them public for backwards compatibility, although it's nonsense)
   public ModelCategory modelCategory;
   public long trainingFrameRows = -1;
 
   public String responseColumn = null;
+
+  class GDeepSHAP extends MRTask<GDeepSHAP> {
+    final String[] _columns;
+    final int[][] _baseIdx;
+    final int[] _metaIdx;
+    final int[] _levelOneIdx;
+    final int _biasTermIdx;
+    final int _biasTermSrc;
+    final Integer[] _baseModelIdx;
+    final int[] _biasTermIndices;
+    final int[] _rowIndices;
+    final int[] _rowBgIndices;
+    
+    final StackedEnsembleParameters.MetalearnerTransform _metaLearnerTransform;
+    
+    GDeepSHAP(String[] columns, String[] baseModels, String[] bigFrameColumnsArr, Integer[] baseModelIdx, StackedEnsembleParameters.MetalearnerTransform metaLearnerTransform) {
+      _columns = columns;
+      _baseIdx = new int[columns.length][baseModels.length];
+      _metaIdx = new int[baseModels.length];
+      _levelOneIdx = new int[baseModels.length];
+      _biasTermIdx = columns.length;
+      List<String> bigFrameColumns = Arrays.asList(bigFrameColumnsArr);
+      _biasTermSrc = bigFrameColumns.indexOf("metalearner_BiasTerm");
+      _baseModelIdx = baseModelIdx;
+      _metaLearnerTransform = metaLearnerTransform;
+      _biasTermIndices = new int[baseModels.length];
+      _rowIndices = new int[baseModels.length + 1];
+      _rowBgIndices = new int[baseModels.length + 1];
+
+      for (int i = 0; i < columns.length; i++) {
+        for (int j = 0; j < baseModels.length; j++) {
+          _baseIdx[i][j] = bigFrameColumns.indexOf(baseModels[j] + "_" + columns[i]);
+        }
+      }
+      for (int i = 0; i < baseModels.length; i++) {
+        _metaIdx[i] = bigFrameColumns.indexOf("metalearner_" + baseModels[i]);
+        _levelOneIdx[i] = bigFrameColumns.indexOf(baseModels[i]);
+        _biasTermIndices[i] = bigFrameColumns.indexOf(baseModels[i]+"_RowIdx");
+        _rowIndices[i] = bigFrameColumns.indexOf(baseModels[i]+"_RowIdx");
+        _rowBgIndices[i] = bigFrameColumns.indexOf(baseModels[i]+"_BackgroundRowIdx");
+      }
+      _rowIndices[baseModels.length] = bigFrameColumns.indexOf("metalearner_RowIdx");
+      _rowBgIndices[baseModels.length] = bigFrameColumns.indexOf("metalearner_BackgroundRowIdx");
+    }
+
+
+    private double baseModelContribution(Chunk[] chunks, int rowIdx, int baseModelIdx, int featureIdx) {
+      return chunks[_baseIdx[featureIdx][baseModelIdx]].atd(rowIdx);
+    }
+
+    private double metalearnerContribution(Chunk[] chunks, int rowIdx, int baseModelIdx) {
+      return chunks[_metaIdx[baseModelIdx]].atd(rowIdx);
+    }
+
+
+    private double baseModelBiasTerm(Chunk[] chunks, int rowIdx, int baseModelIdx) {
+      return chunks[_biasTermIndices[baseModelIdx]].atd(rowIdx);
+    }
+    
+    
+    private double div(double a, double b) {
+      return Math.abs(b) < 1e-6 ? 0 : a/b;
+    }
+
+    @Override
+    public void map(Chunk[] cs, NewChunk[] ncs) {
+      // Multiplier is array of basemodel's contribution to metalearners prediction divided by the difference between 
+      // prediction on the explained point and the background point. Simplified GDeepSHAP rescale rule for 2-layers:
+      //
+      //                                                                / phi_{i+1}_1_1 .. phi_{i+1}_1_m  \     / f_i_1(x) - f_i_1(b) \
+      // phi_i (psi_{i+1} (/) (f_i(x)-f_i(b)) = (phi_i_1, ..., phi_i_n) |      ...           ...          | (/) |         ...         | =
+      //                                                                \ phi_{i+1}_n_1 ..  phi_{i+1}_n_m /     \ f_i_n(x) - f_i_n(b) /
+      //
+      // = (sum_{k <= n} phi_i_k * phi_{i+1}_k_1 /  (f_i_k(x) - f_i_k(b)), ..., sum_{k <= n} phi_i_k * phi_{i+1}_k_m / (f_i_k(x) - f_i_k(b)))
+      //
+      // in this notation multiplier[k] = phi_i_k / (f_i_k(x) - f_i_k(b))
+
+      double[] multiplier = MemoryManager.malloc8d(_metaIdx.length);
+      double result = 0;
+      for (int row = 0; row < cs[0]._len; row++) {
+        // check if row == row and bg row  == bg row
+        long rowIdx = cs[_rowIndices[0]].at8(row);
+        long rowBgIdx = cs[_rowBgIndices[0]].at8(row);
+        for (int i = 0; i < _rowIndices.length; i++) {
+          assert rowIdx == cs[_rowIndices[i]].at8(row);
+          assert rowBgIdx == cs[_rowBgIndices[i]].at8(row);
+        }
+        Arrays.fill(multiplier, 0);
+        for (int bm = 0; bm < _baseModelIdx.length-1; bm++) {
+          for (int col = 0; col < _columns.length; col++) {
+            multiplier[bm] += baseModelContribution(cs, row, bm, col);
+          }
+          multiplier[bm] = div(metalearnerContribution(cs, row, bm), multiplier[bm]);
+        }
+        
+        // Should we deal here with metalearner transform? No, since the transformation is one dimensional and
+        // transforms all the inputs independently the generalized rescale rule cancels it out.
+        //
+        //    Let B stand for basemodel, L for logit metalearner transform, M for metalearner.
+        //    Contributions of the transform sum up to f_L(x) - f_L(b) and since the transform is one dimensional
+        //    we know that phi_L = f_L(x) - f_L(b).
+        //    Let denote the final contributions as phi, (/) as Hadamard division and (*) Hadamard product.
+        //
+        //    Without the metalearner transform the generalized rescale rule gives us:
+        //    phi = phi_B (phi_M (/) (f_B(x)-f_B(b)))
+        //
+        //    With metalearner transform we have:
+        //    phi = (phi_B(phi_L(phi_M (/) (f_L(x)-f_L(b))) (/) (f_B(x)-f_B(b)))) = 
+        //        = (phi_B((f_L(x) - f_L(b))(phi_M (*) (1 (/) (f_L(x)-f_L(b)))) (/) (f_B(x)-f_B(b)))) =
+        //        # Hadamard product is commutative and associative 
+        //        = (phi_B( (f_L(x) - f_L(b)) (/) (f_L(x)-f_L(b)) (*) phi_M)) (/) (f_B(x)-f_B(b)))) =
+        //        = (phi_B( 1 (*) phi_M) (/) (f_B(x)-f_B(b)))) =
+        //        = phi_B (phi_M (/) (f_B(x)-f_B(b)))
+
+
+        for (int col = 0; col < ncs.length-3; col++) {
+          result = 0;
+          for (int bm = 0; bm < multiplier.length; bm++) {
+            result += multiplier[bm]*baseModelContribution(cs, row, bm, col);
+          }
+          ncs[col].addNum(result);
+        }
+        ncs[ncs.length-3].addNum(cs[_biasTermSrc].atd(row));
+        ncs[ncs.length-2].addNum(cs[_rowIndices[0]].at8(row));
+        ncs[ncs.length-1].addNum(cs[_rowBgIndices[0]].at8(row));
+      }
+    }
+  }
+
+  int numOfUsefulBaseModels(){
+    int result = 0;
+    for (Key<Model> bm : _parms._base_models)
+      if (isUsefulBaseModel(bm))
+        result++;
+    return result;
+  }
+  
+  
+  private Frame baseLineContributions(Frame frame, Key<Frame> destination_key, Job<Frame> j, ContributionsOptions options, Frame backgroundFrame) {
+    List<String> baseModels = new ArrayList<>();
+    List<Integer> baseModelsIdx = new ArrayList<>();
+    String[] columns = null;
+    baseModelsIdx.add(0);
+    try (Scope.Safe s = Scope.safe(frame, backgroundFrame)) {
+      Frame fr = new Frame();
+      for (Key<Model> bm : _parms._base_models) {
+        if (isUsefulBaseModel(bm)) {
+          baseModels.add(bm.toString());
+          Frame contributions = ((Model.Contributions) bm.get()).scoreContributions(
+                  frame,
+                  Key.make(destination_key.toString()+"_"+bm),
+                  j,
+                  new ContributionsOptions()
+                          .setOutputFormat(options._outputFormat)
+                          .setOutputSpace(true)
+                          .setOutputPerReference(true),
+                  backgroundFrame);
+          Scope.track(contributions);
+          if (null == columns)
+            columns = contributions._names;
+
+          if (!Arrays.equals(columns, contributions._names)) {
+            if (columns.length == contributions._names.length) {
+              HashSet<String> colSet = new HashSet<>();
+              List<String> colList = Arrays.asList(columns);
+              List<String> contrList = Arrays.asList(contributions._names);
+              colSet.addAll(colList);
+              if (colSet.containsAll(contrList)) {
+                int[] perm = new int[columns.length];
+                for (int i = 0; i < columns.length; i++) {
+                  perm[i] = contrList.indexOf(columns[i]);
+                }
+                contributions.reOrder(perm);
+              }
+            }
+            if (!Arrays.equals(columns, contributions._names)) {
+              if (Original.equals(options._outputFormat)) {
+                throw new IllegalArgumentException("Base model contributions have different columns likely due to models using different categorical encoding. Please use output_format=\"compact\".");
+              }
+              throw new RuntimeException("Base model contributions have different columns. This is not expected. Please fill in a bug report.");
+            }
+          }
+          contributions.setNames(
+                  Arrays.stream(contributions._names)
+                          .map(name -> bm+"_"+name)
+                          .toArray(String[]::new)
+          );
+          fr.add(contributions);
+          baseModelsIdx.add(fr.numCols());
+        }
+      }
+      
+      if (baseModels.isEmpty())
+        throw new RuntimeException("Stacked Ensemble \"" + this._key + "\" doesn't use any base models. Stopping contribution calculation as no feature contributes.");
+
+      assert columns[columns.length - 3].equals("BiasTerm") && columns[columns.length - 2].equals("RowIdx") && columns[columns.length - 1].equals("BackgroundRowIdx");
+      String[] colsWithRows = columns;
+      columns = Arrays.copyOfRange(columns, 0, columns.length - 3);
+
+      Frame adaptFr = adaptFrameForScore(frame, false);
+      Frame levelOneFrame = makeLevelOnePredictFrame(frame, adaptFr, j);
+
+      Frame adaptFrBg = adaptFrameForScore(backgroundFrame, false);
+      Frame levelOneFrameBg = makeLevelOnePredictFrame(backgroundFrame, adaptFrBg, j);
+
+      Frame metalearnerContrib = ((Model.Contributions) _output._metalearner).scoreContributions(levelOneFrame,
+              Key.make(destination_key + "_" + _output._metalearner._key), j,
+              new ContributionsOptions()
+                      .setOutputFormat(options._outputFormat)
+                      .setOutputSpace(options._outputSpace)
+                      .setOutputPerReference(true),
+              levelOneFrameBg);
+      Scope.track(metalearnerContrib);
+
+      metalearnerContrib.setNames(Arrays.stream(metalearnerContrib._names)
+              .map(name -> "metalearner_" + name)
+              .toArray(String[]::new));
+
+      fr.add(metalearnerContrib);
+      DKV.remove(metalearnerContrib.getKey());
+      
+      return Scope.untrack(new GDeepSHAP(columns, baseModels.toArray(new String[0]),
+              fr._names, baseModelsIdx.toArray(new Integer[0]), _parms._metalearner_transform)
+              .withPostMapAction(JobUpdatePostMap.forJob(j))
+              .doAll(colsWithRows.length, Vec.T_NUM, fr)
+              .outputFrame(destination_key, colsWithRows, null));
+    }
+  }
+
+  @Override
+  public long scoreContributionsWorkEstimate(Frame frame, Frame backgroundFrame, boolean outputPerReference) {
+    long workAmount = Math.max(frame.numRows(), backgroundFrame.numRows()); // Maps over the bigger frame while the smaller is sent across the cluster
+    workAmount *= numOfUsefulBaseModels() + 1; // by each BaseModel and the metalearner
+    workAmount += frame.numRows() * backgroundFrame.numRows(); // G-DeepSHAP work
+    if (!outputPerReference)
+      workAmount += frame.numRows() * backgroundFrame.numRows(); // Aggregating over the baselines
+    return workAmount;
+  }
+
+  @Override
+  public Frame scoreContributions(Frame frame, Key<Frame> destination_key, Job<Frame> j, ContributionsOptions options, Frame backgroundFrame) {
+    if (null == backgroundFrame)
+      throw H2O.unimpl("StackedEnsemble supports contribution calculation only with a background frame.");
+    Log.info("Starting contributions calculation for " + this._key + "...");
+    try (Scope.Safe safe = Scope.safe(frame, backgroundFrame)) {
+      Frame contributions;
+      if (options._outputPerReference) {
+        contributions = baseLineContributions(frame, destination_key, j, options, backgroundFrame);
+      } else {
+        Function2<Frame, Boolean, Frame> fun = (subFrame, resultIsFinalFrame) -> {
+          String[] columns = null;
+          String[] colsWithBiasTerm = null;
+          Frame indivContribs = baseLineContributions(subFrame, Key.make(destination_key+"_individual_contribs_for_subframe_"+subFrame._key), j, options, backgroundFrame);
+          columns = Arrays.copyOf(indivContribs.names(), indivContribs.names().length-3);
+          colsWithBiasTerm = Arrays.copyOf(indivContribs.names(), indivContribs.names().length-2);
+          assert colsWithBiasTerm[colsWithBiasTerm.length-1].equals("BiasTerm");
+
+          try {
+            return new ContributionsMeanAggregator(j, (int) subFrame.numRows(), columns.length+1 /* (bias term) */, (int) backgroundFrame.numRows())
+                    .withPostMapAction(JobUpdatePostMap.forJob(j))
+                    .doAll(columns.length+1, Vec.T_NUM, indivContribs)
+                    .outputFrame(resultIsFinalFrame
+                                    ? destination_key // no subframes -> one result with the destination key
+                                    : Key.make(destination_key+"_for_subframe_"+subFrame._key),
+                            colsWithBiasTerm, null);
+          } finally {
+            indivContribs.delete(true);
+          }
+        };
+        if (backgroundFrame.anyVec().nChunks() > H2O.CLOUD._memary.length || // could be map-reduced over the bg frame 
+                !ContributionsWithBackgroundFrameTask.enoughMinMemory(numOfUsefulBaseModels() *
+                        ContributionsWithBackgroundFrameTask.estimatePerNodeMinimalMemory(frame.numCols(), frame, backgroundFrame))) // or we have no other choice due to memory
+          contributions = SplitToChunksApplyCombine.splitApplyCombine(frame, (fr -> fun.apply(fr, false)), destination_key);
+        else {
+          contributions = fun.apply(frame, true);
+          DKV.put(contributions);
+        }
+      }
+      return Scope.untrack(contributions);
+    } finally {
+      Log.info("Finished contributions calculation for " + this._key + "...");
+    }
+  }
 
   public enum StackingStrategy {
     cross_validation,
@@ -53,6 +336,15 @@ public class StackedEnsembleModel extends Model<StackedEnsembleModel,StackedEnse
     if (_parms._metalearner_fold_assignment == AUTO) {
       _parms._metalearner_fold_assignment = Random;
     }
+  }
+
+  @Override
+  public boolean haveMojo() {
+    return super.haveMojo() 
+            && Stream.of(_parms._base_models)
+                     .filter(this::isUsefulBaseModel)
+                     .map(DKV::<Model>getGet)
+                     .allMatch(Model::haveMojo);
   }
 
   public static class StackedEnsembleParameters extends Model.Parameters {
@@ -80,12 +372,13 @@ public class StackedEnsembleModel extends Model<StackedEnsembleModel,StackedEnse
       NONE,
       Logit;
 
+      private LinkFunction logitLink = LinkFunctionFactory.getLinkFunction(LinkFunctionType.logit);
+       
       public Frame transform(StackedEnsembleModel model, Frame frame, Key<Frame> destKey) {
         if (this == Logit) {
           return new MRTask() {
             @Override
             public void map(Chunk[] cs, NewChunk[] ncs) {
-              LinkFunction logitLink = LinkFunctionFactory.getLinkFunction(LinkFunctionType.logit);
               for (int c = 0; c < cs.length; c++) {
                 for (int i = 0; i < cs[c]._len; i++) {
                   final double p = Math.min(1 - 1e-9, Math.max(cs[c].atd(i), 1e-9)); // 0 and 1 don't work well with logit
@@ -96,7 +389,7 @@ public class StackedEnsembleModel extends Model<StackedEnsembleModel,StackedEnse
           }.doAll(frame.numCols(), Vec.T_NUM, frame)
                   .outputFrame(destKey, frame._names, null);
         } else {
-          throw new RuntimeException();
+          throw H2O.unimpl("Transformation "+this.name()+" is not supported.");
         }
       }
     }
@@ -134,6 +427,19 @@ public class StackedEnsembleModel extends Model<StackedEnsembleModel,StackedEnse
         nonPredictors.add(_metalearner_fold_column);
       return nonPredictors.toArray(new String[0]);
     }
+
+    @Override
+    public DistributionFamily getDistributionFamily() {
+      if (_metalearner_parameters != null)
+        return _metalearner_parameters.getDistributionFamily();
+      return super.getDistributionFamily();
+    }
+
+    @Override
+    public void setDistributionFamily(DistributionFamily distributionFamily) {
+      assert _metalearner_parameters != null;
+      _metalearner_parameters.setDistributionFamily(distributionFamily);
+    }
   }
 
   public static class StackedEnsembleOutput extends Model.Output {
@@ -169,7 +475,42 @@ public class StackedEnsembleModel extends Model<StackedEnsembleModel,StackedEnse
    */
   @Override
   protected PredictScoreResult predictScoreImpl(Frame fr, Frame adaptFrm, String destination_key, Job j, boolean computeMetrics, CFuncRef customMetricFunc) {
-    final StackedEnsembleParameters.MetalearnerTransform transform; 
+    try (Scope.Safe safe = Scope.safe(fr, adaptFrm)) {
+      Frame levelOneFrame = makeLevelOnePredictFrame(fr, adaptFrm, j);
+      // TODO: what if we're running multiple in parallel and have a name collision?
+      Log.info("Finished creating \"level one\" frame for scoring: "+levelOneFrame.toString());
+
+      // Score the dataset, building the class distribution & predictions
+
+      Model metalearner = this._output._metalearner;
+      Frame predictFr = metalearner.score(
+              levelOneFrame,
+              destination_key,
+              j,
+              computeMetrics,
+              CFuncRef.from(_parms._custom_metric_func)
+      );
+      ModelMetrics mmStackedEnsemble = null;
+      if (computeMetrics) {
+        // #score has just stored a ModelMetrics object for the (metalearner, preds_levelone) Model/Frame pair.
+        // We need to be able to look it up by the (this, fr) pair.
+        // The ModelMetrics object for the metalearner will be removed when the metalearner is removed.
+        Key<ModelMetrics>[] mms = metalearner._output.getModelMetrics();
+        ModelMetrics lastComputedMetric = mms[mms.length-1].get();
+        mmStackedEnsemble = lastComputedMetric.deepCloneWithDifferentModelAndFrame(this, fr);
+        this.addModelMetrics(mmStackedEnsemble);
+        //now that we have the metric set on the SE model, removing the one we just computed on metalearner (otherwise it leaks in client mode)
+        for (Key<ModelMetrics> mm : metalearner._output.clearModelMetrics(true)) {
+          DKV.remove(mm);
+        }
+      }
+      Scope.untrack(predictFr); // needed in the result
+      return new StackedEnsemblePredictScoreResult(predictFr, mmStackedEnsemble);
+    }
+  }
+
+  private Frame makeLevelOnePredictFrame(Frame fr, Frame adaptFrm, Job j) {
+    final StackedEnsembleParameters.MetalearnerTransform transform;
     if (_parms._metalearner_transform != null && _parms._metalearner_transform != StackedEnsembleParameters.MetalearnerTransform.NONE) {
       if (!(_output.isBinomialClassifier() || _output.isMultinomialClassifier()))
         throw new H2OIllegalArgumentException("Metalearner transform is supported only for classification!");
@@ -178,11 +519,11 @@ public class StackedEnsembleModel extends Model<StackedEnsembleModel,StackedEnse
       transform = null;
     }
     final String seKey = this._key.toString();
-    final Key<Frame> levelOneFrameKey = Key.make("preds_levelone_" + seKey + fr._key);
-    Frame levelOneFrame = transform == null ?
-            new Frame(levelOneFrameKey)  // no transform -> this will be the final frame
-            :
-            new Frame();        // transform -> this is only an intermediate result
+    final String frId = ""+(fr._key == null ? fr.checksum() : fr._key);
+    final Key<Frame> levelOneFrameKey = Key.make("preds_levelone_"+seKey+"_"+frId);
+    Frame levelOneFrame = transform == null 
+            ? new Frame(levelOneFrameKey)  // no transform -> this will be the final frame
+            : new Frame();                 // transform -> this is only an intermediate result
 
     Model[] usefulBaseModels = Stream.of(_parms._base_models)
             .filter(this::isUsefulBaseModel)
@@ -198,7 +539,7 @@ public class StackedEnsembleModel extends Model<StackedEnsembleModel,StackedEnse
         protected void map(int id) {
           baseModelPredictions[id] = usefulBaseModels[id].score(
                   fr,
-                  "preds_base_" + seKey + usefulBaseModels[id]._key + fr._key,
+                  "preds_base_"+seKey+"_"+usefulBaseModels[id]._key+"_"+frId,
                   j,
                   false
           );
@@ -219,35 +560,8 @@ public class StackedEnsembleModel extends Model<StackedEnsembleModel,StackedEnse
     }
     // Add response column, weights columns to level one frame
     StackedEnsemble.addNonPredictorsToLevelOneFrame(_parms, adaptFrm, levelOneFrame, false);
-    // TODO: what if we're running multiple in parallel and have a name collision?
-    Log.info("Finished creating \"level one\" frame for scoring: " + levelOneFrame.toString());
-
-    // Score the dataset, building the class distribution & predictions
-
-    Model metalearner = this._output._metalearner;
-    Frame predictFr = metalearner.score(
-        levelOneFrame, 
-        destination_key, 
-        j, 
-        computeMetrics, 
-        CFuncRef.from(_parms._custom_metric_func)
-    );
-    ModelMetrics mmStackedEnsemble = null;
-    if (computeMetrics) {
-      // #score has just stored a ModelMetrics object for the (metalearner, preds_levelone) Model/Frame pair.
-      // We need to be able to look it up by the (this, fr) pair.
-      // The ModelMetrics object for the metalearner will be removed when the metalearner is removed.
-      Key<ModelMetrics>[] mms = metalearner._output.getModelMetrics();
-      ModelMetrics lastComputedMetric = mms[mms.length - 1].get();
-      mmStackedEnsemble = lastComputedMetric.deepCloneWithDifferentModelAndFrame(this, fr);
-      this.addModelMetrics(mmStackedEnsemble);
-      //now that we have the metric set on the SE model, removing the one we just computed on metalearner (otherwise it leaks in client mode)
-      for (Key<ModelMetrics> mm : metalearner._output.clearModelMetrics(true)) {
-        DKV.remove(mm);
-      }
-    }
-    Frame.deleteTempFrameAndItsNonSharedVecs(levelOneFrame, adaptFrm);
-    return new StackedEnsemblePredictScoreResult(predictFr, mmStackedEnsemble);
+    Scope.track(levelOneFrame); // level-one frame is always temporary and must be used in a scoped context.
+    return levelOneFrame;
   }
 
   private class StackedEnsemblePredictScoreResult extends PredictScoreResult {
@@ -342,346 +656,19 @@ public class StackedEnsembleModel extends Model<StackedEnsembleModel,StackedEnse
     // cross-validation metrics -- the true k-fold cv metrics for the ensemble would require training k sets of
     // cross-validated base models (rather than a single set of cross-validated base models), which is extremely
     // computationally expensive and awkward from the standpoint of the existing Stacked Ensemble API.
-    // More info: https://0xdata.atlassian.net/browse/PUBDEV-3971
+    // More info: https://github.com/h2oai/h2o-3/issues/10864
     // Need to do DeepClone because otherwise framekey is incorrect (metalearner train is levelone not train)
     if (null != this._output._metalearner._output._cross_validation_metrics) {
       this._output._cross_validation_metrics = this._output._metalearner._output._cross_validation_metrics
               .deepCloneWithDifferentModelAndFrame(this, this._output._metalearner._parms.train());
-    }
-  }
-
-  private DistributionFamily familyToDistribution(GLMModel.GLMParameters.Family aFamily) {
-    if (aFamily == GLMModel.GLMParameters.Family.binomial) {
-      return DistributionFamily.bernoulli;
-    }
-    try {
-      return Enum.valueOf(DistributionFamily.class, aFamily.toString());
-    }
-    catch (IllegalArgumentException e) {
-      throw new H2OIllegalArgumentException("Don't know how to find the right DistributionFamily for Family: " + aFamily);
-    }
-  }
-
-  private DistributionFamily distributionFamily(Model aModel) {
-    // TODO: hack alert: In DRF, _parms._distribution is always set to multinomial.  Yay.
-    if (aModel instanceof DRFModel)
-      if (aModel._output.isBinomialClassifier())
-        return DistributionFamily.bernoulli;
-      else if (aModel._output.isClassifier())
-        return DistributionFamily.multinomial;
-      else
-        return DistributionFamily.gaussian;
-
-    if (aModel instanceof StackedEnsembleModel) {
-      StackedEnsembleModel seModel = (StackedEnsembleModel) aModel;
-      if (Metalearners.getActualMetalearnerAlgo(seModel._parms._metalearner_algorithm) == Metalearner.Algorithm.glm) {
-        return familyToDistribution(((GLMModel.GLMParameters) seModel._parms._metalearner_parameters)._family);
-      }
-      if (seModel._parms._metalearner_parameters._distribution != DistributionFamily.AUTO) {
-        return seModel._parms._metalearner_parameters._distribution;
-      }
-    }
-
-    try {
-      Field familyField = ReflectionUtils.findNamedField(aModel._parms, "_family");
-      Field distributionField = (familyField != null ? null : ReflectionUtils.findNamedField(aModel, "_dist"));
-      if (null != familyField) {
-        // GLM only, for now
-        GLMModel.GLMParameters.Family thisFamily = (GLMModel.GLMParameters.Family) familyField.get(aModel._parms);
-        return familyToDistribution(thisFamily);
-      }
-
-      if (null != distributionField) {
-        Distribution distribution = ((Distribution)distributionField.get(aModel));
-        DistributionFamily distributionFamily;
-        if (null != distribution)
-          distributionFamily = distribution._family;
-        else
-          distributionFamily = aModel._parms._distribution;
-
-        // NOTE: If the algo does smart guessing of the distribution family we need to duplicate the logic here.
-        if (distributionFamily == DistributionFamily.AUTO) {
-          if (aModel._output.isBinomialClassifier())
-            distributionFamily = DistributionFamily.bernoulli;
-          else if (aModel._output.isClassifier())
-            distributionFamily = DistributionFamily.multinomial;
-          else
-            distributionFamily = DistributionFamily.gaussian;
-        } // DistributionFamily.AUTO
-
-        return distributionFamily;
-      }
-
-      throw new H2OIllegalArgumentException("Don't know how to stack models that have neither a distribution hyperparameter nor a family hyperparameter.");
-    }
-    catch (Exception e) {
-      throw new H2OIllegalArgumentException(e.toString(), e.toString());
+      this._output._cross_validation_metrics_summary = (TwoDimTable) this._output._metalearner._output._cross_validation_metrics_summary.clone();
     }
   }
 
 
 
-  /**
-   * Inherit distribution and its parameters
-   * @param baseModelParms
-   */
-  private void inheritDistributionAndParms(Model.Parameters baseModelParms) {
-    if (baseModelParms instanceof GLMModel.GLMParameters) {
-      try {
-        _parms._metalearner_parameters._distribution = familyToDistribution(((GLMModel.GLMParameters) baseModelParms)._family);
-      } catch (IllegalArgumentException e) {
-        Log.warn("Stacked Ensemble is not able to inherit distribution from GLM's family " + ((GLMModel.GLMParameters) baseModelParms)._family + ".");
-      }
-    } else if (baseModelParms instanceof DRFModel.DRFParameters) {
-      inferBasicDistribution();
-    } else {
-      _parms._metalearner_parameters._distribution = baseModelParms._distribution;
-    }
-    // deal with parameterized distributions
-    switch (baseModelParms._distribution) {
-      case custom:
-          _parms._metalearner_parameters._custom_distribution_func = baseModelParms._custom_distribution_func;
-        break;
-      case huber:
-          _parms._metalearner_parameters._huber_alpha = baseModelParms._huber_alpha;
-        break;
-      case tweedie:
-        _parms._metalearner_parameters._tweedie_power = baseModelParms._tweedie_power;
-        break;
-      case quantile:
-        _parms._metalearner_parameters._quantile_alpha = baseModelParms._quantile_alpha;
-        break;
-    }
-  }
-
-  /**
-   * Inherit family and its parameters
-   * @param baseModelParms
-   */
-  private void inheritFamilyAndParms(Model.Parameters baseModelParms) {
-    GLMModel.GLMParameters metaParams = (GLMModel.GLMParameters) _parms._metalearner_parameters;
-    if (baseModelParms instanceof GLMModel.GLMParameters) {
-      GLMModel.GLMParameters glmParams = (GLMModel.GLMParameters) baseModelParms;
-      metaParams._family = glmParams._family;
-      metaParams._link = glmParams._link;
-    } else if (baseModelParms instanceof DRFModel.DRFParameters) {
-      inferBasicDistribution();
-    } else {
-      try {
-        metaParams._family = Enum.valueOf(GLMModel.GLMParameters.Family.class, baseModelParms._distribution.name());
-      } catch (IllegalArgumentException e) {
-        Log.warn("Stacked Ensemble is not able to inherit family from a distribution " + baseModelParms._distribution + ".");
-        inferBasicDistribution();
-      }
-    }
-    // deal with parameterized distributions
-    if (metaParams._family == GLMModel.GLMParameters.Family.tweedie) {
-      _parms._metalearner_parameters._tweedie_power = baseModelParms._tweedie_power;
-    }
-  }
-
-  /**
-   * Infers distribution/family from a model
-   * @param aModel
-   * @return True if the distribution or family was inferred from a model
-   */
-  boolean inferDistributionOrFamily(Model aModel) {
-    if (Metalearners.getActualMetalearnerAlgo(_parms._metalearner_algorithm) == Metalearner.Algorithm.glm) { //use family
-      if (((GLMModel.GLMParameters)_parms._metalearner_parameters)._family != GLMModel.GLMParameters.Family.AUTO) {
-        return false; // User specified family - no need to infer one; Link will be also used properly if it is specified
-      }
-      inheritFamilyAndParms(aModel._parms);
-    } else { // use distribution
-      if (_parms._metalearner_parameters._distribution != DistributionFamily.AUTO) {
-        return false; // User specified distribution; no need to infer one
-      }
-      inheritDistributionAndParms(aModel._parms);
-    }
-    return true;
-  }
-
-  void inferBasicDistribution() {
-    if (Metalearners.getActualMetalearnerAlgo(_parms._metalearner_algorithm).equals(Metalearner.Algorithm.glm)) {
-      GLMModel.GLMParameters parms = (GLMModel.GLMParameters)_parms._metalearner_parameters;
-      parms._link = GLMModel.GLMParameters.Link.family_default;
-      if (this._output.isBinomialClassifier()) {
-        parms._family = GLMModel.GLMParameters.Family.binomial;
-      } else if (this._output.isClassifier()) {
-        parms._family = GLMModel.GLMParameters.Family.multinomial;
-      } else {
-        parms._family = GLMModel.GLMParameters.Family.gaussian;
-      }
-    } else {
-      if (this._output.isBinomialClassifier()) {
-        _parms._metalearner_parameters._distribution = DistributionFamily.bernoulli;
-      } else if (this._output.isClassifier()) {
-        _parms._metalearner_parameters._distribution = DistributionFamily.multinomial;
-      } else {
-        _parms._metalearner_parameters._distribution = DistributionFamily.gaussian;
-      }
-    }
-  }
-
-  void checkAndInheritModelProperties() {
-    if (null == _parms._base_models || 0 == _parms._base_models.length)
-      throw new H2OIllegalArgumentException("When creating a StackedEnsemble you must specify one or more models; found 0.");
-
-    if (null != _parms._metalearner_fold_column && 0 != _parms._metalearner_nfolds)
-      throw new H2OIllegalArgumentException("Cannot specify fold_column and nfolds at the same time.");
-
-    Model aModel = null;
-    boolean retrievedFirstModelParams = false;
-    boolean inferredDistributionFromFirstModel = false;
-    GLMModel firstGLM = null;
-    boolean blending_mode = _parms._blending != null;
-    boolean cv_required_on_base_model = !blending_mode;
-    boolean require_consistent_training_frames = !blending_mode && !_parms._is_cv_model;
-    
-    //following variables are collected from the 1st base model (should be identical across base models), i.e. when beenHere=false
-    int basemodel_nfolds = -1;
-    Parameters.FoldAssignmentScheme basemodel_fold_assignment = null;
-    String basemodel_fold_column = null;
-    long seed = -1;
-    //end 1st model collected fields
-
-    // Make sure we can set metalearner's family and link if needed
-    if (_parms._metalearner_parameters == null) {
-      _parms.initMetalearnerParams();
-    }
-
-    for (Key<Model> k : _parms._base_models) {
-      aModel = DKV.getGet(k);
-      if (null == aModel) {
-        Log.warn("Failed to find base model; skipping: "+k);
-        continue;
-      }
-      Log.debug("Checking properties for model "+k);
-      if (!aModel.isSupervised()) {
-        throw new H2OIllegalArgumentException("Base model is not supervised: "+aModel._key.toString());
-      }
-
-      if (retrievedFirstModelParams) {
-        // check that the base models are all consistent with first based model
-
-        if (modelCategory != aModel._output.getModelCategory())
-          throw new H2OIllegalArgumentException("Base models are inconsistent: "
-                  +"there is a mix of different categories of models among "+Arrays.toString(_parms._base_models));
-
-        if (! responseColumn.equals(aModel._parms._response_column))
-          throw new H2OIllegalArgumentException("Base models are inconsistent: they use different response columns."
-                  +" Found: "+responseColumn+" (StackedEnsemble) and "+aModel._parms._response_column+" (model "+k+").");
-
-        if (require_consistent_training_frames) {
-          if (trainingFrameRows < 0) trainingFrameRows = _parms.train().numRows();
-          long numOfRowsUsedToTrain = aModel._parms.train() == null ?
-                  aModel._output._cross_validation_holdout_predictions_frame_id.get().numRows() :
-                  aModel._parms.train().numRows();
-          if (trainingFrameRows != numOfRowsUsedToTrain)
-            throw new H2OIllegalArgumentException("Base models are inconsistent: they use different size (number of rows) training frames."
-                    +" Found: "+trainingFrameRows+" (StackedEnsemble) and "+numOfRowsUsedToTrain+" (model "+k+").");
-        }
-
-        if (cv_required_on_base_model) {
-
-          if (aModel._parms._fold_assignment != basemodel_fold_assignment
-                  && !(aModel._parms._fold_assignment == AUTO && basemodel_fold_assignment == Random)
-          ) {
-            throw new H2OIllegalArgumentException("Base models are inconsistent: they use different fold_assignments.");
-          }
-
-          if (aModel._parms._fold_column == null) {
-            // If we don't have a fold_column require:
-            // nfolds > 1
-            // nfolds consistent across base models
-            if (aModel._parms._nfolds < 2)
-              throw new H2OIllegalArgumentException("Base model does not use cross-validation: "+aModel._parms._nfolds);
-            if (basemodel_nfolds != aModel._parms._nfolds)
-              throw new H2OIllegalArgumentException("Base models are inconsistent: they use different values for nfolds.");
-
-            if (basemodel_fold_assignment == Random && aModel._parms._seed != seed)
-              throw new H2OIllegalArgumentException("Base models are inconsistent: they use random-seeded k-fold cross-validation but have different seeds.");
-
-          } else {
-            if (!aModel._parms._fold_column.equals(basemodel_fold_column))
-              throw new H2OIllegalArgumentException("Base models are inconsistent: they use different fold_columns.");
-          }
-          if (! aModel._parms._keep_cross_validation_predictions)
-            throw new H2OIllegalArgumentException("Base model does not keep cross-validation predictions: "+aModel._parms._nfolds);
-        }
-
-        if (inferredDistributionFromFirstModel) {
-          // Check inferred params and if they differ fallback to basic distribution of model category
-          if (!(aModel instanceof DRFModel) && distributionFamily(aModel) == distributionFamily(this)) {
-            boolean sameParams = true;
-            switch (_parms._metalearner_parameters._distribution) {
-              case custom:
-                sameParams = _parms._metalearner_parameters._custom_distribution_func
-                        .equals(aModel._parms._custom_distribution_func);
-                break;
-              case huber:
-                sameParams = _parms._metalearner_parameters._huber_alpha == aModel._parms._huber_alpha;
-                break;
-              case tweedie:
-                sameParams = _parms._metalearner_parameters._tweedie_power == aModel._parms._tweedie_power;
-                break;
-              case quantile:
-                sameParams = _parms._metalearner_parameters._quantile_alpha == aModel._parms._quantile_alpha;
-                break;
-            }
-
-            if ((aModel instanceof GLMModel) && (Metalearners.getActualMetalearnerAlgo(_parms._metalearner_algorithm) == Metalearner.Algorithm.glm)) {
-              if (firstGLM == null) {
-                firstGLM = (GLMModel) aModel;
-                inheritFamilyAndParms(firstGLM._parms);
-              } else {
-                sameParams = ((GLMModel.GLMParameters) _parms._metalearner_parameters)._link.equals(((GLMModel) aModel)._parms._link);
-              }
-            }
-
-            if (!sameParams) {
-              Log.warn("Base models are inconsistent; they use same distribution but different parameters of " +
-                      "the distribution. Reverting to default distribution.");
-              inferBasicDistribution();
-              inferredDistributionFromFirstModel = false;
-            }
-          } else {
-            if (distributionFamily(aModel) != distributionFamily(this)) {
-              // Distribution of base models differ
-              Log.warn("Base models are inconsistent; they use different distributions: "
-                      + distributionFamily(this) + " and: " + distributionFamily(aModel) +
-                      ". Reverting to default distribution.");
-            } // else the first model was DRF/XRT so we don't want to warn
-            inferBasicDistribution();
-            inferredDistributionFromFirstModel = false;
-          }
-        }
-      } else {
-        // !retrievedFirstModelParams: this is the first base_model
-        this.modelCategory = aModel._output.getModelCategory();
-        inferredDistributionFromFirstModel = inferDistributionOrFamily(aModel);
-        firstGLM = aModel instanceof GLMModel && inferredDistributionFromFirstModel ? (GLMModel) aModel : null;
-        responseColumn = aModel._parms._response_column;
-
-        if (! _parms._response_column.equals(responseColumn))  // _params._response_column can't be null, validated by ModelBuilder
-          throw new H2OIllegalArgumentException("StackedModel response_column must match the response_column of each base model."
-                  +" Found: "+_parms._response_column+"(StackedEnsemble) and: "+responseColumn+" (model "+k+").");
-
-        basemodel_nfolds = aModel._parms._nfolds;
-        basemodel_fold_assignment = aModel._parms._fold_assignment;
-        if (basemodel_fold_assignment == AUTO) basemodel_fold_assignment = Random;
-        basemodel_fold_column = aModel._parms._fold_column;
-        seed = aModel._parms._seed;
-        retrievedFirstModelParams = true;
-      }
-
-    } // for all base_models
-
-    if (null == aModel)
-      throw new H2OIllegalArgumentException("When creating a StackedEnsemble you must specify one or more models; "
-              +_parms._base_models.length+" were specified but none of those were found: "+Arrays.toString(_parms._base_models));
-  }
   
-  void deleteBaseModelPredictions() {
+  public void deleteBaseModelPredictions() {
     if (_output._base_model_predictions_keys != null) {
       for (Key<Frame> key : _output._base_model_predictions_keys) {
         if (_output._levelone_frame_id != null && key.get() != null)
@@ -730,16 +717,19 @@ public class StackedEnsembleModel extends Model<StackedEnsembleModel,StackedEnse
 
   @Override
   public void deleteCrossValidationModels() {
-    _output._metalearner.deleteCrossValidationModels();
+    if (_output._metalearner != null)
+      _output._metalearner.deleteCrossValidationModels();
   }
 
   @Override
   public void deleteCrossValidationPreds() {
-    _output._metalearner.deleteCrossValidationPreds();
+    if (_output._metalearner != null)
+      _output._metalearner.deleteCrossValidationPreds();
   }
 
   @Override
   public void deleteCrossValidationFoldAssignment() {
-    _output._metalearner.deleteCrossValidationFoldAssignment();
+    if (_output._metalearner != null)
+      _output._metalearner.deleteCrossValidationFoldAssignment();
   }
 }

@@ -1,5 +1,5 @@
 ARG FROM_VERSION
-ARG FROM_IMAGE=harbor.h2o.ai/opsh2oai/h2o-3/dev-jdk-others-base
+ARG FROM_IMAGE=353750902984.dkr.ecr.us-east-1.amazonaws.com/h2o-3/dev-jdk-others-base
 FROM ${FROM_IMAGE}:${FROM_VERSION}
 
 ARG INSTALL_JAVA_VERSION
@@ -15,7 +15,7 @@ RUN \
     sync && \
     if [ "${JAVA_VERSION}" = '8' ] || [ "${JAVA_VERSION}" = '10' ] || [ "${JAVA_VERSION}" = '11' ] || \
         [ "${JAVA_VERSION}" = '12' ] || [ "${JAVA_VERSION}" = '13' ] || [ "${JAVA_VERSION}" = '14' ] || \
-        [ "${JAVA_VERSION}" = '15' ]; then \
+        [ "${JAVA_VERSION}" = '15' ] || [ "${JAVA_VERSION}" = '16' ] || [ "${JAVA_VERSION}" = '17' ]; then \
         /tmp/install_java_version_local ${JAVA_VERSION} /tmp/java-${JAVA_VERSION}-vars.sh; \
     else \
         /tmp/install_java_version ${JAVA_VERSION} /tmp/java-${JAVA_VERSION}-vars.sh; \

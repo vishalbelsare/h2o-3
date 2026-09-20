@@ -108,7 +108,7 @@ class ARFFParser extends CsvParser {
         }
         data[0] = determineTokens(datalines[0], sep, singleQuotes, escapechar);
         ncols = (ncols > 0) ? ncols : data[0].length;
-        labels = null;
+        labels = labels[0] == null ? null : labels;
       } else {                    // 2 or more lines
         if (sep == GUESS_SEP) {   // first guess the separator
           //FIXME if last line is incomplete, this logic fails
@@ -129,7 +129,7 @@ class ARFFParser extends CsvParser {
     naStrings = addDefaultNAs(naStrings, ncols);
 
     // Return the final setup
-    return new ParseSetup(ARFF_INFO, sep, singleQuotes, ParseSetup.NO_HEADER, ncols, labels, ctypes, domains, naStrings, data, nonDataLineMarkers, escapechar);
+    return new ParseSetup(ARFF_INFO, sep, singleQuotes, ParseSetup.NO_HEADER, ncols, labels, ctypes, domains, naStrings, data, nonDataLineMarkers, escapechar, false);
   }
 
   private static String[][] addDefaultNAs(String[][] naStrings, int nCols) {

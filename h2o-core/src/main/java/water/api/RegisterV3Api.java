@@ -269,6 +269,10 @@ public class RegisterV3Api extends AbstractRegister {
             "POST /3/FriedmansPopescusH", ModelsHandler.class, "makeFriedmansPopescusH",
             "Fetch Friedman Popescus H.");
 
+    context.registerEndpoint("makeRules",
+            "POST /3/SignificantRules", ModelsHandler.class, "makeSignificantRulesTable",
+            "Fetch significant rules table.");
+
     context.registerEndpoint("fetchPDP",
             "GET /3/PartialDependence/{name}", ModelsHandler.class, "fetchPartialDependence",
             "Fetch partial dependence data.");
@@ -440,7 +444,7 @@ public class RegisterV3Api extends AbstractRegister {
             "Execute an Rapids AstRoot.");
 
     context.registerEndpoint("_assembly_toJava",
-            "GET /99/Assembly.java/{assembly_id}/{pojo_name}", AssemblyHandler.class, "toJava",
+            "GET /99/Assembly.java/{assembly_id}/{file_name}", AssemblyHandler.class, "toJava",
             "Generate a Java POJO from the Assembly");
 
     context.registerEndpoint("_assembly_fit",
@@ -474,6 +478,14 @@ public class RegisterV3Api extends AbstractRegister {
     context.registerEndpoint("endSession",
             "DELETE /3/InitID", RapidsHandler.class, "endSession",
             "End a session.");
+
+    context.registerEndpoint("setSessionProperty",
+            "POST /3/SessionProperties", RapidsHandler.class, "setSessionProperty",
+            "Set session property.");
+
+    context.registerEndpoint("getSessionProperty",
+            "GET /3/SessionProperties", RapidsHandler.class, "getSessionProperty",
+            "Get session property.");
 
     context.registerEndpoint("garbageCollect",
             "POST /3/GarbageCollect", GarbageCollectHandler.class, "gc",

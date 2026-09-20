@@ -1,4 +1,3 @@
-from __future__ import print_function
 import sys
 sys.path.insert(1,"../../")
 import h2o
@@ -21,7 +20,7 @@ def test_pdp_user_splits_no_cardinality_check():
     user_splits = {
         "AGE": ["64", "75"]
     }
-    pdp = gbm_model.partial_plot(data=data, cols=['AGE'], user_splits=user_splits, plot=False)
+    pdp = gbm_model.partial_plot(frame=data, cols=['AGE'], user_splits=user_splits, plot=False)
     assert len(pdp[0].cell_values) == 2
 
 

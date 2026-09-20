@@ -4,6 +4,7 @@ hex.schemas.GridSearchSchema
 hex.schemas.HyperSpaceSearchCriteriaV99
 hex.schemas.HyperSpaceSearchCriteriaV99$CartesianSearchCriteriaV99
 hex.schemas.HyperSpaceSearchCriteriaV99$RandomDiscreteValueSearchCriteriaV99
+hex.schemas.HyperSpaceSearchCriteriaV99$SequentialSearchCriteriaV99
 hex.schemas.ModelBuilderSchema
 hex.schemas.QuantileV3
 hex.schemas.QuantileV3$QuantileParametersV3
@@ -71,11 +72,8 @@ water.api.schemas3.ModelMetricsBinomialGLMGenericV3
 water.api.schemas3.ModelMetricsBinomialV3
 water.api.schemas3.ModelMetricsBinomialGenericV3
 water.api.schemas3.ModelMetricsBinomialUpliftV3
+water.api.schemas3.ModelMetricsBinomialUpliftGenericV3
 water.api.schemas3.ModelMetricsClusteringV3
-water.api.schemas3.ModelMetricsHGLMV3
-water.api.schemas3.ModelMetricsHGLMGenericV3
-water.api.schemas3.ModelMetricsHGLMGaussianGaussianV3
-water.api.schemas3.ModelMetricsHGLMGaussianGaussianGenericV3
 water.api.schemas3.ModelMetricsMultinomialGLMV3
 water.api.schemas3.ModelMetricsMultinomialV3
 water.api.schemas3.ModelMetricsMultinomialGenericV3
@@ -86,6 +84,8 @@ water.api.schemas3.ModelMetricsOrdinalGenericV3
 water.api.schemas3.ModelMetricsOrdinalGLMGenericV3
 water.api.schemas3.ModelMetricsRegressionGLMV3
 water.api.schemas3.ModelMetricsRegressionGLMGenericV3
+water.api.schemas3.ModelMetricsRegressionHGLMV3
+water.api.schemas3.ModelMetricsRegressionHGLMGenericV3
 water.api.schemas3.ModelMetricsRegressionCoxPHV3
 water.api.schemas3.ModelMetricsRegressionCoxPHGenericV3
 water.api.schemas3.ModelMetricsRegressionV3
@@ -123,6 +123,7 @@ water.api.schemas3.RemoveV3
 water.api.schemas3.RequestSchemaV3
 water.api.schemas3.RouteV3
 water.api.schemas3.SaveToHiveTableV3
+water.api.schemas3.SessionPropertyV3
 water.api.schemas3.SchemaMetadataV3
 water.api.schemas3.SchemaV3
 water.api.schemas3.ShutdownV3
@@ -173,3 +174,4 @@ water.api.schemas3.SegmentModelsParametersV3
 water.api.schemas3.FeatureInteractionV3
 water.api.RecoveryHandler$ResumeV3
 water.api.schemas3.FriedmanPopescusHV3
+water.api.schemas3.SignificantRulesV3

@@ -6,6 +6,7 @@ import ai.h2o.automl.AutoMLBuildSpec;
 import ai.h2o.automl.AutoMLBuildSpec.AutoMLStoppingCriteria;
 import hex.KeyValue;
 import hex.ScoreKeeper.StoppingMetric;
+import hex.genmodel.utils.DistributionFamily;
 import water.Iced;
 import water.api.API;
 import water.api.EnumValuesProvider;
@@ -36,7 +37,7 @@ public class AutoMLBuildSpecV99 extends SchemaV3<AutoMLBuildSpec, AutoMLBuildSpe
     @API(help="Model performance based stopping criteria for the AutoML run.")
     public AutoMLStoppingCriteriaV99 stopping_criteria;
 
-    @API(help="Number of folds for k-fold cross-validation (defaults to 5, must be >=2 or use 0 to disable). Disabling prevents Stacked Ensembles from being built.",
+    @API(help="Number of folds for k-fold cross-validation (defaults to -1 (AUTO), otherwise it must be >=2 or use 0 to disable). Disabling prevents Stacked Ensembles from being built.",
             level = API.Level.secondary)
     public int nfolds;
 
@@ -69,6 +70,28 @@ public class AutoMLBuildSpecV99 extends SchemaV3<AutoMLBuildSpec, AutoMLBuildSpe
             level = API.Level.expert)
     public String export_checkpoints_dir;
 
+    @API(help="Distribution function used by algorithms that support it; other algorithms use their defaults.",
+            direction=API.Direction.INOUT, values = { "AUTO", "bernoulli", //"fractionalbinomial", "quasibinomial", "ordinal",
+            "multinomial", "gaussian", "poisson", "gamma", "tweedie", "laplace", "quantile", "huber", "custom" })
+    public DistributionFamily distribution;
+
+    @API(direction = API.Direction.INPUT,
+            help = "Tweedie power for Tweedie regression, must be between 1 and 2.")
+    public double tweedie_power;
+
+    @API(direction = API.Direction.INPUT,
+            help = "Desired quantile for Quantile regression, must be between 0 and 1.")
+    public double quantile_alpha;
+
+    @API(direction = API.Direction.INPUT,
+            help = "Desired quantile for Huber/M-regression (threshold between quadratic and linear loss, must be between 0 and 1).")
+    public double huber_alpha;
+    
+    @API(help = "Reference to custom evaluation function, format: `language:keyName=funcName`", level = API.Level.secondary, direction=API.Direction.INOUT, gridable = false)
+    public String custom_metric_func;
+    
+    @API(help = "Reference to custom distribution, format: `language:keyName=funcName`", direction=API.Direction.INOUT)
+    public String custom_distribution_func;
   } // class AutoMLBuildControlV99
 
   /**
@@ -135,15 +158,19 @@ public class AutoMLBuildSpecV99 extends SchemaV3<AutoMLBuildSpec, AutoMLBuildSpe
             level = API.Level.secondary)
     public long seed;
 
-    @API(help = "Maximum number of models to build (optional).",
+    @API(help = "Maximum number of models to build (optional)." +
+            " Always set this parameter to ensure AutoML reproducibility: all models are then trained until convergence and none is constrained by a time budget.",
             level = API.Level.secondary)
     public int max_models;
 
-    @API(help = "This argument specifies the maximum time that the AutoML process will run for. If neither max_runtime_secs nor max_models are specified by the user, then max_runtime_secs defaults to 3600 seconds (1 hour).",
+    @API(help = "This argument specifies the maximum time that the AutoML process will run for." +
+            " If both max_runtime_secs and max_models are specified, then the AutoML run will stop as soon as it hits either of these limits." +
+            " If neither max_runtime_secs nor max_models are specified, then max_runtime_secs defaults to 3600 seconds (1 hour).",
             level = API.Level.secondary)
     public double max_runtime_secs;
 
-    @API(help = "Maximum time to spend on each individual model (optional).",
+    @API(help = "Maximum time to spend on each individual model (optional)." +
+            " Note that models constrained by a time budget are not guaranteed reproducible.",
             level = API.Level.secondary)
     public double max_runtime_secs_per_model;
 

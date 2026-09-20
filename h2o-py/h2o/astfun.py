@@ -5,11 +5,11 @@ Disassembly support.
 :copyright: (c) 2016 H2O.ai
 :license:   Apache License Version 2.0 (see LICENSE for details)
 """
-from __future__ import absolute_import, division, print_function, unicode_literals
 from h2o.utils.compatibility import *
 
 import dis
 import inspect
+import sys
 
 from . import h2o
 from .expr import ExprNode, ASTId
@@ -33,6 +33,9 @@ BYTECODE_INSTRS = {
     "BINARY_AND": "&",
     "BINARY_OR": "|",
     "COMPARE_OP": "",  # some cmp_op
+    # from https://docs.python.org/3/library/dis.html#opcode-BINARY_OP : 
+    # Implements the binary and in-place operators (depending on the value of op).
+    "BINARY_OP": "",  # Py >= 3.11
     # from https://docs.python.org/3/library/dis.html#opcode-CALL_FUNCTION :
     # Calls a function. argc indicates the number of positional arguments. The positional arguments
     # are on the stack, with the right-most argument on top. Below the arguments, the function o
@@ -71,14 +74,43 @@ BYTECODE_INSTRS = {
     # (either self and an unbound method object or NULL and an arbitrary callable).
     # All of them are popped and the return value is pushed.
     "CALL_METHOD": "",  # Py >= 3.7
+    # from https://docs.python.org/3/library/dis.html#opcode-CALL:
+    # Calls a callable object with the number of arguments, including the named arguments specified
+    # by the preceding KW_NAMES, if any.
+    "CALL": "",  # Py >= 3.11
 }
 
+# The list of parameters for BINARY_OP instruction. 
+# Source: https://github.com/python/cpython/blob/main/Include/opcode.h
+BINARY_OPS = {
+    0: "+",    # NB_ADD
+    1: "&",    # NB_AND                                   
+    2: "//",   # NB_FLOOR_DIVIDE
+    5: "*",    # NB_MULTIPLY
+    6: "%",    # NB_REMAINDER
+    7: "|",    # NB_OR
+    8: "**",   # NB_POWER
+    10: "-",   # NB_SUBTRACT
+    11: "/",   # NB_TRUE_DIVIDE
+    13: "+",   # NB_INPLACE_ADD
+    14: "&",   # NB_INPLACE_AND
+    15: "//",  # NB_INPLACE_FLOOR_DIVIDE
+    18: "*",   # NB_INPLACE_MULTIPLY
+    19: "%",   # NB_INPLACE_REMAINDER
+    20: "|",   # NB_INPLACE_OR
+    21: "**",  # NB_INPLACE_POWER
+    23: "-",   # NB_INPLACE_SUBTRACT
+    24: "/",   # NB_INPLACE_TRUE_DIVIDE
+}
 
 def is_bytecode_instruction(instr):
     return instr in BYTECODE_INSTRS
 
 def is_comp(instr):
     return "COMPARE" in instr
+
+def is_binary_op(instr):
+    return "BINARY_OP" == instr
 
 def is_binary(instr):
     return "BINARY" in instr
@@ -88,6 +120,9 @@ def is_unary(instr):
 
 def is_func(instr):
     return "CALL_FUNCTION" == instr
+
+def is_call(instr):
+    return "CALL" == instr
 
 def is_func_kw(instr):
     return "CALL_FUNCTION_KW" == instr
@@ -104,8 +139,23 @@ def is_func_var_kw(instr): # Py <= 3.5
 def is_method_call(instr): # Py >= 3.7
     return "CALL_METHOD" == instr
 
+def is_dictionary_merge(instr): # Py >= 3.9
+    return "DICT_MERGE" == instr
+
+def is_list_extend(instr): # Py >= 3.9
+    return "LIST_EXTEND" == instr
+
+def is_list_to_tuple(instr): # Py >= 3.9
+    return "LIST_TO_TUPLE" == instr
+
+def is_build_list(instr):
+    return "BUILD_LIST" == instr
+
+def is_build_map(instr):
+    return "BUILD_MAP" == instr
+
 def is_callable(instr):
-    return is_func(instr) or is_func_kw(instr) or is_func_ex(instr) or is_method_call(instr)
+    return is_func(instr) or is_func_kw(instr) or is_func_ex(instr) or is_method_call(instr) or is_call(instr)
 
 def is_builder(instr):
     return instr.startswith('BUILD_')
@@ -131,6 +181,12 @@ def is_load_outer_scope(instr):
 def is_return(instr):
     return "RETURN_VALUE" == instr
 
+def is_copy_free(instr):
+    return "COPY_FREE_VARS" == instr
+
+def should_be_skipped(instr):
+    return instr in "COPY_FREE_VARS", "RESUME", "PUSH_NULL"  # from Py 3.11 
+
 try:
     # Python 3
     from dis import _unpack_opargs
@@ -141,14 +197,11 @@ except ImportError:
         i = 0
         n = len(code)
         while i < n:
-            op = ord(code[i]) if PY2 else code[i]
+            op = code[i]
             pos = i
             i += 1
             if op >= dis.HAVE_ARGUMENT:
-                if PY2:
-                    arg = ord(code[i]) + ord(code[i+1])*256 + extended_arg
-                else: # to support Python version (3,3.5)
-                    arg = code[i] + code[i+1]*256 + extended_arg
+                arg = code[i] + code[i+1]*256 + extended_arg
                 extended_arg = 0
                 i += 2
                 if op == dis.EXTENDED_ARG:
@@ -162,6 +215,7 @@ def _disassemble_lambda(co):
     code = co.co_code
     ops = []
     for offset, op, arg in _unpack_opargs(code):
+        opname = dis.opname[op]
         args = []
         if arg is not None:
             if op in dis.hasconst:
@@ -172,8 +226,13 @@ def _disassemble_lambda(co):
                 raise ValueError("unimpl: op in hasjrel")
             elif op in dis.haslocal:
                 args.append(co.co_varnames[arg])  # LOAD_FAST
-            elif op in dis.hasfree:
-                args.append(co.co_freevars[arg])  # LOAD_DEREF
+            elif opname == 'COPY_FREE_VARS':
+                args.append(arg)
+            elif op in dis.hasfree:  # LOAD_DEREF
+                if sys.version_info.major == 3 and sys.version_info.minor >= 11:
+                    args.append(co.co_freevars[arg-1])
+                else:
+                    args.append(co.co_freevars[arg])
             elif op in dis.hascompare:
                 args.append(dis.cmp_op[arg])  # COMPARE_OP
             elif is_callable(dis.opname[op]):
@@ -209,7 +268,9 @@ def _lambda_bytecode_to_ast(co, ops):
         body, s = _opcode_read_arg(s, ops, keys)
     else:
         raise ValueError("unimpl bytecode instr: " + instr)
-    if s > 0:
+    while s >= 0 and should_be_skipped(keys[s]):
+        s -= 1
+    if s >= 0:
         print("Dumping disassembled code: ")
         for i in range(len(ops)):
             if i == s:
@@ -226,12 +287,18 @@ def _opcode_read_arg(start_index, ops, keys):
     return_idx = start_index - 1
     if is_bytecode_instruction(instr):
         # print(ops)
-        if is_binary(instr):
+        if is_binary_op(instr):
+            if op not in BINARY_OPS.keys():
+                raise ValueError("Unimplemented binary op with id: " + op)
+            return _binop_bc(BINARY_OPS[op], return_idx, ops, keys)
+        elif is_binary(instr):
             return _binop_bc(BYTECODE_INSTRS[instr], return_idx, ops, keys)
         elif is_comp(instr):
             return _binop_bc(op, return_idx, ops, keys)
         elif is_unary(instr):
             return _unop_bc(BYTECODE_INSTRS[instr], return_idx, ops, keys)
+        elif is_call(instr):
+            return _call_bc(op, return_idx, ops, keys)
         elif is_func(instr):
             return _call_func_bc(op, return_idx, ops, keys)
         elif is_func_kw(instr):
@@ -250,6 +317,10 @@ def _opcode_read_arg(start_index, ops, keys):
         return [_load_fast(op), return_idx]
     elif is_load_outer_scope(instr):
         return [_load_outer_scope(op), return_idx]
+    elif is_build_list(instr):
+        return _build_args(start_index, ops, keys)
+    elif is_build_map(instr):
+        return _build_kwargs(start_index, ops, keys)
     return op, return_idx
 
 
@@ -263,6 +334,28 @@ def _unop_bc(op, idx, ops, keys):
     arg, idx = _opcode_read_arg(idx, ops, keys)
     return ExprNode(op, arg), idx
 
+
+def _build_args(idx, ops, keys):
+    instr, nargs = _get_instr(ops, idx)
+    idx -= 1
+    args = []
+    while nargs > 0:
+        new_arg, idx = _opcode_read_arg(idx, ops, keys)
+        args.insert(0, new_arg)
+        nargs -= 1
+    return args, idx
+
+
+def _build_kwargs(idx, ops, keys):
+    instr, nargs = _get_instr(ops, idx)
+    kwargs = dict()
+    idx -= 1
+    while nargs > 0:
+        val, idx = _opcode_read_arg(idx, ops, keys)
+        key, idx = _opcode_read_arg(idx, ops, keys)
+        kwargs[key] = val
+        nargs -= 1
+    return kwargs, idx
 
 def _call_func_bc(nargs, idx, ops, keys):
     """
@@ -342,6 +435,13 @@ def _call_func_ex_bc(flags, idx, ops, keys):
                         key, idx = _opcode_read_arg(idx, ops, keys)
                         kwargs[key] = val
                         nargs -= 1
+        elif is_dictionary_merge(instr):
+            idx -= 1
+            kwargs = dict()
+            while nargs + 1 > 0:
+                new_kwargs, idx = _opcode_read_arg(idx, ops, keys)
+                kwargs.update(new_kwargs)
+                nargs -= 1
         else:
             # load **kwargs
             kwargs, idx = _opcode_read_arg(idx, ops, keys)
@@ -349,9 +449,14 @@ def _call_func_ex_bc(flags, idx, ops, keys):
         kwargs = {}
 
     instr, nargs = _get_instr(ops, idx)
-    if is_builder(instr):  # if there are positional args, it will start with a BUILD_TUPLE instr
+    while is_list_to_tuple(instr):
+        idx = idx - 1
+        instr, nargs = _get_instr(ops, idx)
+    if is_builder(instr) or is_list_extend(instr):
         idx -= 1
         args = []
+        if is_list_extend(instr):
+            nargs += 1
         while nargs > 0:
             new_args, idx = _opcode_read_arg(idx, ops, keys)
             args.insert(0, *new_args)
@@ -367,6 +472,26 @@ def _call_method_bc(nargs, idx, ops, keys):
     # CALL_METHOD instr doesn't support keyword or unpacking arguments
     args, idx, _ = _read_explicit_positional_args(nargs, idx, ops, keys)
     return _to_rapids_expr(idx, ops, keys, *args)
+
+
+def _call_bc(nargs, idx, ops, keys):
+    idx -= 1  # Skipping PRE_CALL instruction
+    # Read keyword arguments
+    instr, keywords = _get_instr(ops, idx)
+    kwargs = {}
+    if instr == "KW_NAMES":
+        # Skip the LOAD_CONST tuple
+        idx -= 1
+        # Load keyword arguments from stack
+        for key in keywords:
+            val, idx = _opcode_read_arg(idx, ops, keys)
+            kwargs[key] = val
+            nargs -= 1
+        exp_kwargs, idx, nargs = _read_explicit_keyword_args(nargs, idx, ops, keys)
+        kwargs.update(exp_kwargs)
+        
+    args, idx, nargs = _read_explicit_positional_args(nargs, idx, ops, keys)
+    return _to_rapids_expr(idx, ops, keys, *args, **kwargs)
 
 
 def _read_explicit_keyword_args(nargs, idx, ops, keys):
@@ -411,18 +536,13 @@ def _get_h2o_frame_method_args(op, *args, **kwargs):
     fr_cls = h2o.H2OFrame
     if not hasattr(fr_cls, op):
         raise ValueError("Unimplemented: op <%s> not bound in H2OFrame" % op)
-    if PY2:
-        argspec = inspect.getargspec(getattr(fr_cls, op))
-        argnames = argspec.args[1:]
-        argdefs = list(argspec.defaults or [])
-    else:
-        argnames = []
-        argdefs = []
-        for name, param in inspect.signature(getattr(fr_cls, op)).parameters.items():
-            if name == "self": continue
-            if param.kind == inspect._VAR_KEYWORD: continue
-            argnames.append(name)
-            argdefs.append(param.default)
+    argnames = []
+    argdefs = []
+    for name, param in inspect.signature(getattr(fr_cls, op)).parameters.items():
+        if name == "self": continue
+        if param.kind == inspect._VAR_KEYWORD: continue
+        argnames.append(name)
+        argdefs.append(param.default)
     method_args = list(args) + argdefs[len(args):]
     for a in kwargs: method_args[argnames.index(a)] = kwargs[a]
     return method_args

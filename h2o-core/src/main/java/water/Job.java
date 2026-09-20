@@ -7,6 +7,7 @@ import water.util.ArrayUtils;
 import water.util.Log;
 
 import java.util.Arrays;
+import java.util.concurrent.TimeUnit;
 
 /** Jobs are used to do minimal tracking of long-lifetime user actions,
  *  including progress-bar updates and the ability to review in progress or
@@ -102,7 +103,7 @@ public final class Job<T extends Keyed> extends Keyed<Job> {
 
   // Job Keys are pinned to this node (i.e., the node that invoked the
   // computation), because it should be almost always updated locally
-  private static Key<Job> defaultJobKey() { return Key.make((byte) 0, Key.JOB, false, H2O.SELF); }
+  private static Key<Job> defaultJobKey() { return Key.make(Key.JOB, false, H2O.SELF); }
 
 
   /** Job start_time and end_time using Sys.CTM */
@@ -225,7 +226,7 @@ public final class Job<T extends Keyed> extends Keyed<Job> {
 
   // --------------
   /** A system key for global list of Job keys. */
-  public static final Key<Job> LIST = Key.make(" JobList", (byte) 0, Key.BUILT_IN_KEY, false);
+  public static final Key<Job> LIST = Key.make(" JobList", Key.BUILT_IN_KEY);
 
   public String[] warns() {
     update_from_remote();
@@ -363,7 +364,16 @@ public final class Job<T extends Keyed> extends Keyed<Job> {
     @Override public void reduce( AssertNoKey ank ) { _found |= ank._found; }
   }
 
-  public static class JobCancelledException extends RuntimeException {}
+  public static class JobCancelledException extends RuntimeException {
+
+    public JobCancelledException() {
+      this(null);
+    }
+    
+    public JobCancelledException(Job job) {
+      super("job "+ (job == null ? "" : job._description+" ["+job._key+"] ") +"was cancelled");
+    }
+  }
 
   // A simple barrier.  Threads blocking on the job will block on this
   // "barrier" task, which will block until the fjtask runs the onCompletion or
@@ -480,4 +490,76 @@ public final class Job<T extends Keyed> extends Keyed<Job> {
       }
   }
   @Override public Class<KeyV3.JobKeyV3> makeSchema() { return KeyV3.JobKeyV3.class; }
+
+  /**
+   * Tries to retrieve a completed Job from DKV. It will wait
+   * up to given timeout period if the requested job is still running - giving it
+   * a chance to complete before this method has to return.
+   * 
+   * @param key job key
+   * @param timeMillis timeout period in milliseconds, if job is still running it will wait
+   *                   up to this amount of time for the job to finish
+   * @return null, if job doesn't exist, a Job instance otherwise
+   */
+  public static Job<?> tryGetDoneJob(Key<Job> key, long timeMillis) {
+    final Value val = DKV.get(key);
+    if (val == null) {
+      throw new IllegalArgumentException("Job is missing");
+    }
+    final Iced<?> ice = val.get();
+    if (!(ice instanceof Job)) {
+      throw new IllegalArgumentException("Must be a Job not a " + ice.getClass());
+    }
+    final Job<?> j = (Job<?>) ice;
+    if (timeMillis > 0 && !j.isStopped()) {
+      j.blockingWaitForDone(timeMillis, false);
+    }
+    return j;
+  }
+
+  void blockingWaitForDone(long timeMillis, boolean checkConsistency) {
+    final Barrier2 bar = _barrier;
+    if (bar == null) {
+      if (checkConsistency) {
+        if (isRunning()) { // barrier is only removed after job is stopped
+          throw new IllegalStateException("Running job is in an inconsistent state (barrier is missing)");
+        }
+      }
+      return;
+    }
+
+    try {
+      bar.get(timeMillis, TimeUnit.MILLISECONDS, true);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    } catch (Exception e) {
+      Log.trace(e);
+    }
+  }
+
+  private static boolean FORCE_SLEEP_WAITING = H2O.getSysBoolProperty("job.sleep_wait_for_done", false); 
+  
+  /**
+   * Waits if necessary for at most the given time for the Job
+   * to complete. The wait is always blocking regardless if called from
+   * an F/J thread or a regular thread.
+   * 
+   * @param timeoutMillis the maximum time in milliseconds to wait
+   */
+  public void blockingWaitForDone(long timeoutMillis) {
+    if (H2O.ARGS.client || FORCE_SLEEP_WAITING) { // in client-mode the job is actually running on a different node
+      sleep(timeoutMillis); // for debugging to be able to prove that blockingWaitForDone saves time compared to just sleep
+    } else {
+      blockingWaitForDone(timeoutMillis, true);
+    }
+  }
+
+  private static void sleep(long timeoutMillis) {
+    try {
+      Thread.sleep(timeoutMillis);
+    } catch (InterruptedException ignored) {
+      Thread.currentThread().interrupt();
+    }
+  }
+
 }

@@ -828,7 +828,7 @@ public class DRFTest extends TestUtil {
     }
   }
 
-  // HEXDEV-319
+  // gh issue: https://github.com/h2oai/private-h2o-3/issues/381
   @Ignore
   @Test public void testAirline() {
     Frame tfr=null;
@@ -1757,7 +1757,7 @@ public class DRFTest extends TestUtil {
       parms._ignored_columns = new String[]{"ID"};
 
       SharedTreeModel<?, ?, ?> model = new DRF(parms).trainModel().get();
-      Scope.track_generic(model);
+      Scope.<SharedTreeModel>track_generic(model);
 
       Frame ff = model.scoreFeatureFrequencies(train, Key.<Frame>make("ff_prostate"));
       Scope.track(ff);

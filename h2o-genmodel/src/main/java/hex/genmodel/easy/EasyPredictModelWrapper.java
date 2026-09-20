@@ -3,6 +3,7 @@ package hex.genmodel.easy;
 import hex.ModelCategory;
 import hex.genmodel.*;
 import hex.genmodel.algos.deeplearning.DeeplearningMojoModel;
+import hex.genmodel.algos.drf.DrfMojoModel;
 import hex.genmodel.algos.glrm.GlrmMojoModel;
 import hex.genmodel.algos.targetencoder.TargetEncoderMojoModel;
 import hex.genmodel.algos.tree.SharedTreeMojoModel;
@@ -201,6 +202,9 @@ public class EasyPredictModelWrapper implements Serializable {
       if (val && (ModelCategory.Multinomial.equals(model.getModelCategory()))) {
         throw new IOException("setEnableContributions is not yet supported for multinomial classification models.");
       }
+      if (val && model instanceof DrfMojoModel && ((DrfMojoModel) model).isBinomialDoubleTrees()) {
+        throw new IOException("setEnableContributions is not yet supported for model with binomial_double_trees parameter set.");
+      }
       enableContributions = val;
       return this;
     }
@@ -212,7 +216,7 @@ public class EasyPredictModelWrapper implements Serializable {
      * In current implementation only AUTO encoding is supported by the Wrapper, users are required to set
      * this flag to true if they want to use POJOs/MOJOs with other encodings than AUTO.
      * 
-     * This requirement will be removed in https://0xdata.atlassian.net/browse/PUBDEV-6929 
+     * This requirement will be removed in https://github.com/h2oai/h2o-3/issues/8707
      * @param val if true, user needs to provide already encoded input in the RowData structure
      * @return self
      */
@@ -381,11 +385,32 @@ public class EasyPredictModelWrapper implements Serializable {
         return predictKLime(data);
       case CoxPH:
         return predictCoxPH(data);
+      case BinomialUplift:
+        return predictUpliftBinomial(data);
       case Unknown:
         throw new PredictException("Unknown model category");
       default:
         throw new PredictException("Unhandled model category (" + m.getModelCategory() + ") in switch statement");
     }
+  }
+
+  /**
+   * Make a prediction on a new data point.
+   *
+   * This method has the same input as predict. The only difference is that
+   * it returns and array instead of a prediction object.
+   * 
+   * The meaning of the returned values can be decoded by calling getOutputNames
+   * and if any returned values are categorical - method getOutputDomain can be
+   * used to find mapping of indexes to categorical values for the particular column.
+   *
+   * @param data A new data point. Column names are case-sensitive.
+   * @param offset Value of offset (use 0 if the model was trained without offset).
+   * @return An array representing a prediction.
+   * @throws PredictException if prediction cannot be made (eg.: input is invalid)
+   */
+  public double[] predictRaw(RowData data, double offset) throws PredictException {
+    return preamble(m.getModelCategory(), data, offset);
   }
 
   /**
@@ -657,6 +682,19 @@ public class EasyPredictModelWrapper implements Serializable {
   }
 
   /**
+   * Make a prediction on a new data point using Uplift Binomial model.
+   * @param data A new data point. Unknown or missing column name is treated as a NaN or ignored. Column names are case sensitive.
+   * @return The prediction.
+   * @throws PredictException
+   */
+  public UpliftBinomialModelPrediction predictUpliftBinomial(RowData data) throws PredictException {
+    double[] preds = preamble(ModelCategory.BinomialUplift, data, 0);
+    UpliftBinomialModelPrediction p = new UpliftBinomialModelPrediction();
+    p.predictions = preds;
+    return p;
+  }
+  
+  /**
    * @deprecated Use {@link #predictTargetEncoding(RowData)} instead.
    */
   @Deprecated
@@ -883,12 +921,16 @@ public class EasyPredictModelWrapper implements Serializable {
     return p;
   }
   
-  public CoxPHModelPrediction predictCoxPH(RowData data) throws PredictException {
-    final double[] preds = preamble(ModelCategory.CoxPH, data);
+  public CoxPHModelPrediction predictCoxPH(RowData data, double offset) throws PredictException {
+    final double[] preds = preamble(ModelCategory.CoxPH, data, offset);
     CoxPHModelPrediction p = new CoxPHModelPrediction();
     p.value = preds[0];
     
     return p;
+  }
+
+  public CoxPHModelPrediction predictCoxPH(RowData data) throws PredictException {
+    return predictCoxPH(data, 0);
   }
 
   public float[] predictContributions(RowData data) throws PredictException {

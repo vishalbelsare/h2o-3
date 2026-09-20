@@ -4,10 +4,12 @@ import org.apache.log4j.LogManager;
 import org.apache.log4j.Logger;
 import water.H2O;
 import water.H2OError;
+import water.api.RapidsHandler;
 import water.api.RequestServer;
 import water.api.schemas3.H2OErrorV3;
 import water.exceptions.H2OAbstractRuntimeException;
 import water.exceptions.H2OFailException;
+import water.rapids.Session;
 import water.util.HttpResponseStatus;
 import water.util.Log;
 import water.util.StringUtils;
@@ -46,7 +48,7 @@ public class ServletUtils {
 
   private static final ThreadLocal<Long> _startMillis = new ThreadLocal<>();
   private static final ThreadLocal<Integer> _status = new ThreadLocal<>();
-  private static final ThreadLocal<String> _userAgent = new ThreadLocal<>();
+  private static final ThreadLocal<Transaction> _transaction = new ThreadLocal<>();
 
   private ServletUtils() {
     // not instantiable
@@ -72,19 +74,42 @@ public class ServletUtils {
     return _startMillis.get();
   }
 
-  public static void startTransaction(String userAgent) {
-    _userAgent.set(userAgent);
+  public static void startTransaction(String userAgent, String sessionKey) {
+    _transaction.set(new Transaction(userAgent, sessionKey));
   }
 
   public static void endTransaction() {
-    _userAgent.remove();
+    _transaction.remove();
+  }
+
+  private static class Transaction {
+    final String _userAgent;
+    final String _sessionKey;
+
+    Transaction(String userAgent, String sessionKey) {
+      _userAgent = userAgent;
+      _sessionKey = sessionKey;
+    }
   }
 
   /**
    * @return Thread-local User-Agent for this transaction.
    */
   public static String getUserAgent() {
-    return _userAgent.get();
+    Transaction t = _transaction.get();
+    return t != null ? t._userAgent : null;
+  }
+
+  public static String getSessionProperty(String key, String defaultValue) {
+    Transaction t = _transaction.get();
+    if (t == null || t._sessionKey == null) {
+      return defaultValue;
+    }
+    Session session = RapidsHandler.getSession(t._sessionKey);
+    if (session == null) {
+      return defaultValue;
+    }
+    return session.getProperty(key, defaultValue);
   }
 
   public static void setResponseStatus(HttpServletResponse response, int sc) {
@@ -97,6 +122,20 @@ public class ServletUtils {
     response.sendError(sc, msg);
   }
 
+  public static InputStream extractInputStream(HttpServletRequest request, HttpServletResponse response) throws IOException {
+    final InputStream is;
+    final String contentType = request.getContentType();
+    
+    // The Python client sends requests with null content-type when uploading large files,
+    // whereas Sparkling Water proxy sends requests with content-type set to application/octet-stream.
+    if (contentType == null || contentType.equals("application/octet-stream")) {
+      is = request.getInputStream();
+    } else {
+      is = extractPartInputStream(request, response);
+    }
+    return is;
+  }
+  
   public static InputStream extractPartInputStream (HttpServletRequest request, HttpServletResponse response) throws
       IOException {
     String ct = request.getContentType();
@@ -228,7 +267,7 @@ public class ServletUtils {
     response.setHeader("X-Content-Type-Options", "nosniff");
     response.setHeader("Content-Security-Policy", "default-src 'self' 'unsafe-eval' 'unsafe-inline'; img-src 'self' data:");
     // Note: ^^^ unsafe-eval/-inline are essential for Flow to work
-    //           this will also kill the component "Star H2O on Github" in Flow - see HEXDEV-739
+    //           this will also kill the component "Star H2O on Github" in Flow - see https://github.com/h2oai/private-h2o-3/issues/44
     // Custom headers - using addHeader - can be multi-value and cannot overwrite the security headers
     for (H2O.KeyValueArg header : H2O.ARGS.extra_headers) {
       response.addHeader(header._key, header._value);

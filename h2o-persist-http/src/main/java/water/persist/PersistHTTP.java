@@ -156,20 +156,23 @@ public class PersistHTTP extends PersistEagerHTTP {
   @Override
   public void importFiles(String path, String pattern,
                           /*OUT*/ ArrayList<String> files, ArrayList<String> keys, ArrayList<String> fails, ArrayList<String> dels) {
-
+    if (path.contains("/3/ImportFiles")) {
+      throw new IllegalArgumentException("Recursive path reference not allowed");
+    }
     boolean lazyLoadEnabled = Boolean.parseBoolean(System.getProperty(ENABLE_LAZY_LOAD_KEY, "true"));
     if (lazyLoadEnabled) {
+      long length = -1L;
       try {
         URI source = URI.create(path);
-        long length = useLazyLoad(source);
-        if (length >= 0) {
-          final Key destination_key = HTTPFileVec.make(path, length);
-          files.add(path);
-          keys.add(destination_key.toString());
-          return;
-        }
+        length = useLazyLoad(source);
       } catch (Exception e) {
         Log.debug("Failed to detect range support for " + path, e);
+      }
+      if (length >= 0) {
+        final Key<?> destination_key = HTTPFileVec.make(path, length);
+        files.add(path);
+        keys.add(destination_key.toString());
+        return;
       }
     } else
       Log.debug("HTTP lazy load disabled by user.");

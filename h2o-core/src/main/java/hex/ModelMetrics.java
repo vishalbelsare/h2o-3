@@ -58,6 +58,10 @@ public class ModelMetrics extends Keyed<ModelMetrics> {
     catch (Throwable t) { }
   }
 
+  public final void setModelKey(Key modelKey) {
+    _modelKey = modelKey;
+  }
+
   public final ModelMetrics withModelAndFrame(Model model, Frame frame) {
     _modelKey = model == null ? null : model._key;
     _model_category = model == null ? null : model._output.getModelCategory();
@@ -108,13 +112,16 @@ public class ModelMetrics extends Keyed<ModelMetrics> {
 
   public final Model model() { return _model==null ? (_model=DKV.getGet(_modelKey)) : _model; }
   public final Frame frame() { return _frame==null ? (_frame=DKV.getGet(_frameKey)) : _frame; }
+  
+  public double custom() { return _custom_metric == null ? Double.NaN : _custom_metric.value; }
+  public double custom_increasing() { return _custom_metric == null ? Double.NaN : _custom_metric.value; }  // same as custom but informs stopping criteria that higher is better
 
   public double mse() { return _MSE; }
   public double rmse() { return Math.sqrt(_MSE);}
   public ConfusionMatrix cm() { return null; }
   public float[] hr() { return null; }
   public AUC2 auc_obj() { return null; }
-
+  
   public static ModelMetrics defaultModelMetrics(Model model) {
     return model._output._cross_validation_metrics != null ? model._output._cross_validation_metrics
         : model._output._validation_metrics != null ? model._output._validation_metrics
@@ -135,6 +142,10 @@ public class ModelMetrics extends Keyed<ModelMetrics> {
     Method method = null;
     Object obj = null;
     criterion = criterion.toLowerCase();
+    
+    if ("custom".equals(criterion)){
+      return mm.custom();
+    }
     
     // Constructing confusion matrix based on criterion
     ConfusionMatrix cm;
@@ -169,7 +180,7 @@ public class ModelMetrics extends Keyed<ModelMetrics> {
       }
     }
     if (null == method)
-      throw new H2OIllegalArgumentException("Failed to find ModelMetrics for criterion: " + criterion);
+      throw new H2OIllegalArgumentException("Failed to find ModelMetrics for criterion: " + criterion + " for model_id: " + mm._modelKey);
 
     try {
       return (double) method.invoke(obj);
@@ -263,6 +274,10 @@ public class ModelMetrics extends Keyed<ModelMetrics> {
     excluded.add("remove");
     excluded.add("nobs");
     if (m!=null) {
+      if (null == m._custom_metric) {  // hide custom metrics when not available
+        excluded.add("custom");
+        excluded.add("custom_increasing");
+      }
       for (Method meth : m.getClass().getMethods()) {
         if (excluded.contains(meth.getName())) continue;
         try {
@@ -413,6 +428,7 @@ public class ModelMetrics extends Keyed<ModelMetrics> {
 
     // Custom metric holder
     public CustomMetric _customMetric = null;
+    public CMetricScoringTask _CMetricScoringTask = null;
 
     public  double weightedSigma() {
 //      double sampleCorrection = _count/(_count-1); //sample variance -> depends on the number of ACTUAL ROWS (not the weighted count)
@@ -424,12 +440,26 @@ public class ModelMetrics extends Keyed<ModelMetrics> {
       assert(weight == 1 && offset == 0);
       return perRow(ds, yact, m);
     }
+    
     public void reduce( T mb ) {
       _sumsqe += mb._sumsqe;
       _count += mb._count;
       _wcount += mb._wcount;
       _wY += mb._wY;
       _wYY += mb._wYY;
+    }
+
+    // For Sparkling Water - Scala has troubles with Java generics at this place.
+    public void reduce(Object mb) {
+      reduce((T)mb);
+    }
+    
+    public void reduceForCV(T mb){
+      if (null != _CMetricScoringTask) {
+        _CMetricScoringTask.reduceCustomMetric(mb._CMetricScoringTask);
+        _customMetric = _CMetricScoringTask.computeCustomMetric();
+      }
+      this.reduce(mb);
     }
 
     public void postGlobal() {
@@ -464,6 +494,5 @@ public class ModelMetrics extends Keyed<ModelMetrics> {
     public void cachePrediction(double[] cdist, Chunk[] chks, int row, int cacheChunkIdx, Model m) {
       throw new UnsupportedOperationException("Should be overridden in implementation (together with makePredictionCache(..)).");
     }
-
   }
 }

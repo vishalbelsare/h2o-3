@@ -1,10 +1,20 @@
 rest_api_version = 99
 
+options = dict(
+    model_extensions=[
+        'h2o.model.extensions.Fairness',
+        "h2o.model.extensions.Contributions",
+    ],
+)
 
 def update_param(name, param):
     if name == 'metalearner_params':
         param['type'] = 'KeyValue'
         param['default_value'] = None
+        return param
+    if name == 'base_models':
+        param['ptype'] = '[H2OEstimator, H2OGridSearch, str]'
+        param['dtype'] = 'List[Union[str, H2OEstimator, H2OGridSearch]]'
         return param
     return None  # param untouched
 

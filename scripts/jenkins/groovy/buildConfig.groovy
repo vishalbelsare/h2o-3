@@ -8,15 +8,15 @@ def call(final context, final String mode, final String commitMessage, final cha
 
 class BuildConfig {
 
-  public static final String DOCKER_REGISTRY = 'harbor.h2o.ai'
+  public static final String DOCKER_REGISTRY = '353750902984.dkr.ecr.us-east-1.amazonaws.com'
 
   private static final String DEFAULT_IMAGE_NAME = 'dev-build-base'
   private static final String DEFAULT_HADOOP_IMAGE_NAME = 'dev-build-hadoop'
   private static final String DEFAULT_RELEASE_IMAGE_NAME = 'dev-release'
 
-  public static final int DEFAULT_IMAGE_VERSION_TAG = 40
-  public static final String AWSCLI_IMAGE = DOCKER_REGISTRY + '/opsh2oai/awscli'
-  public static final String S3CMD_IMAGE = DOCKER_REGISTRY + '/opsh2oai/s3cmd'
+  public static final int DEFAULT_IMAGE_VERSION_TAG = 47
+  public static final String AWSCLI_IMAGE = DOCKER_REGISTRY + '/h2oai/devutils/awscli'
+  public static final String S3CMD_IMAGE = DOCKER_REGISTRY + '/s3cmd'
 
   private static final String HADOOP_IMAGE_NAME_PREFIX = 'h2o-3-hadoop'
   private static final String HADOOP_IMAGE_VERSION_TAG = '84'
@@ -26,7 +26,11 @@ class BuildConfig {
   public static final String XGB_TARGET_MINIMAL = 'minimal'
   public static final String XGB_TARGET_OMP = 'omp'
   public static final String XGB_TARGET_GPU = 'gpu'
+  public static final String XGB_BUILD_TAG = '-b1'
   private Map supportedXGBEnvironments
+  // The mirror is slower than the public repositories on a cold cache, and every build starts on
+  // a fresh agent, so keep it off unless a build explicitly asks for it.
+  private boolean h2oNexusEnabled = false
 
   public static final String COMPONENT_PY = 'py'
   public static final String COMPONENT_R = 'r'
@@ -36,8 +40,10 @@ class BuildConfig {
   // always run
   public static final String COMPONENT_ANY = 'any'
   public static final String COMPONENT_HADOOP = 'hadoop'
+  public static final String COMPONENT_MAIN = 'main'
   public static final String COMPONENT_MINIMAL = 'minimal' 
-  public static final List<String> TEST_PACKAGES_COMPONENTS = [COMPONENT_PY, COMPONENT_R, COMPONENT_JS, COMPONENT_JAVA, COMPONENT_HADOOP, COMPONENT_MINIMAL]
+  public static final String COMPONENT_STEAM = 'steam'
+  public static final List<String> TEST_PACKAGES_COMPONENTS = [COMPONENT_PY, COMPONENT_R, COMPONENT_JS, COMPONENT_JAVA, COMPONENT_HADOOP, COMPONENT_MINIMAL, COMPONENT_STEAM, COMPONENT_MAIN]
 
   public static final String H2O_JAR_STASH_NAME = 'h2o-3-stash-jar'
   private static final String TEST_PACKAGE_STASH_NAME_PREFIX = 'h2o-3-stash'
@@ -48,14 +54,15 @@ class BuildConfig {
 
   public static final String RELEASE_BRANCH_PREFIX = 'rel-'
 
-  public static final String DEFAULT_PYTHON_VERSION = '3.6'
-  public static final List PYTHON_VERSIONS = ['2.7', '3.5', '3.6', '3.7', '3.8']
-  public static final List R_VERSIONS = ['3.3.3', '3.4.1']
+  public static final String DEFAULT_PYTHON_VERSION = '3.7'
+  public static final List PYTHON_VERSIONS = ['3.7', '3.8', '3.9', '3.10', '3.11']
+  public static final List R_VERSIONS = ['3.4.1', '3.5.3', '4.0.2', '4.4.0', '4.5.2']
+
 
   public static final String MAKEFILE_PATH = 'scripts/jenkins/Makefile.jenkins'
   public static final String BENCHMARK_MAKEFILE_PATH = 'ml-benchmark/jenkins/Makefile.jenkins'
 
-  private static final List<String> STASH_ALWAYS_COMPONENTS = [COMPONENT_R, COMPONENT_MINIMAL]
+  private static final List<String> STASH_ALWAYS_COMPONENTS = [COMPONENT_R, COMPONENT_MINIMAL, COMPONENT_STEAM, COMPONENT_MAIN]
 
   private static final String JACOCO_GRADLE_OPT = 'jacocoCoverage'
 
@@ -75,12 +82,14 @@ class BuildConfig {
   private List<String> additionalGradleOpts
   private String xgbVersion
   private String gradleVersion
+  private List<String> changedPythonTests
 
   void initialize(final context, final String mode, final String commitMessage, final changes,
                   final boolean ignoreChanges, final List<String> distributionsToBuild, final List<String> gradleOpts,
                   final String xgbVersion, final String gradleVersion) {
     this.mode = mode
     this.nodeLabel = nodeLabel
+    this.h2oNexusEnabled = Boolean.parseBoolean(String.valueOf(context.params.h2oNexusEnabled))
     this.commitMessage = commitMessage
     this.buildHadoop = (mode == 'MODE_HADOOP' || mode == 'MODE_KERBEROS')
     this.additionalGradleOpts = gradleOpts
@@ -93,25 +102,26 @@ class BuildConfig {
       detectChanges(changes)
     }
     changesMap[COMPONENT_HADOOP] = buildHadoop
+    changedPythonTests = detectPythonTestChanges(changes)
 
-    nodeLabels = NodeLabels.findByBuildURL(context.env.BUILD_URL)
+    nodeLabels = NodeLabels.LABELS_C1
     supportedXGBEnvironments = [
       'centos7.3': [
         [name: 'CentOS 7.3 Minimal', dockerfile: 'xgb/centos/Dockerfile-centos-minimal', fromImage: 'centos:7.3.1611', targetName: XGB_TARGET_MINIMAL, nodeLabel: getDefaultNodeLabel()],
-        [name: 'CentOS 7.3 OMP', dockerfile: 'xgb/centos/Dockerfile-centos-omp', fromImage: 'harbor.h2o.ai/opsh2oai/h2o-3-xgb-runtime-minimal:centos7.3', targetName: XGB_TARGET_OMP, nodeLabel: getDefaultNodeLabel()],
+        [name: 'CentOS 7.3 OMP', dockerfile: 'xgb/centos/Dockerfile-centos-omp', fromImage: "harbor.h2o.ai/opsh2oai/h2o-3-xgb-runtime-minimal:centos7.3${XGB_BUILD_TAG}", targetName: XGB_TARGET_OMP, nodeLabel: getDefaultNodeLabel()],
       ],
       'centos7.4': [
-        [name: 'CentOS 7.4 GPU', dockerfile: 'xgb/centos/Dockerfile-centos-gpu', fromImage: 'nvidia/cuda:10.0-devel-centos7', targetName: XGB_TARGET_GPU, nodeLabel: getGPUNodeLabel()],
+        [name: 'CentOS 7.4 GPU', dockerfile: 'xgb/centos/Dockerfile-centos-gpu', fromImage: 'nvidia/cuda:11.0.3-devel-centos7', targetName: XGB_TARGET_GPU, nodeLabel: getGPUNodeLabel()],
       ],
       'ubuntu16': [
         [name: 'Ubuntu 16.04 Minimal', dockerfile: 'xgb/ubuntu/Dockerfile-ubuntu-minimal', fromImage: 'ubuntu:16.04', targetName: XGB_TARGET_MINIMAL, nodeLabel: getDefaultNodeLabel()],
-        [name: 'Ubuntu 16.04 OMP', dockerfile: 'xgb/ubuntu/Dockerfile-ubuntu-omp', fromImage: 'harbor.h2o.ai/opsh2oai/h2o-3-xgb-runtime-minimal:ubuntu16', targetName: XGB_TARGET_OMP, nodeLabel: getDefaultNodeLabel()],
-        [name: 'Ubuntu 16.04 GPU', dockerfile: 'xgb/ubuntu/Dockerfile-ubuntu-gpu', fromImage: 'nvidia/cuda:10.0-devel-ubuntu16.04', targetName: XGB_TARGET_GPU, nodeLabel: getGPUNodeLabel()],
+        [name: 'Ubuntu 16.04 OMP', dockerfile: 'xgb/ubuntu/Dockerfile-ubuntu-omp', fromImage: "harbor.h2o.ai/opsh2oai/h2o-3-xgb-runtime-minimal:ubuntu16${XGB_BUILD_TAG}", targetName: XGB_TARGET_OMP, nodeLabel: getDefaultNodeLabel()],
+        [name: 'Ubuntu 16.04 GPU', dockerfile: 'xgb/ubuntu/Dockerfile-ubuntu-gpu', fromImage: 'nvidia/cuda:11.0.3-devel-ubuntu16.04', targetName: XGB_TARGET_GPU, nodeLabel: getGPUNodeLabel()],
       ],
       'ubuntu18': [
         [name: 'Ubuntu 18.04 Minimal', dockerfile: 'xgb/ubuntu/Dockerfile-ubuntu-minimal', fromImage: 'ubuntu:18.04', targetName: XGB_TARGET_MINIMAL, nodeLabel: getDefaultNodeLabel()],
-        [name: 'Ubuntu 18.04 OMP', dockerfile: 'xgb/ubuntu/Dockerfile-ubuntu-omp', fromImage: 'harbor.h2o.ai/opsh2oai/h2o-3-xgb-runtime-minimal:ubuntu18', targetName: XGB_TARGET_OMP, nodeLabel: getDefaultNodeLabel()],
-        [name: 'Ubuntu 18.04 GPU', dockerfile: 'xgb/ubuntu/Dockerfile-ubuntu-gpu', fromImage: 'nvidia/cuda:10.0-devel-ubuntu18.04', targetName: XGB_TARGET_GPU, nodeLabel: getGPUNodeLabel()],
+        [name: 'Ubuntu 18.04 OMP', dockerfile: 'xgb/ubuntu/Dockerfile-ubuntu-omp', fromImage: "harbor.h2o.ai/opsh2oai/h2o-3-xgb-runtime-minimal:ubuntu18${XGB_BUILD_TAG}", targetName: XGB_TARGET_OMP, nodeLabel: getDefaultNodeLabel()],
+        [name: 'Ubuntu 18.04 GPU', dockerfile: 'xgb/ubuntu/Dockerfile-ubuntu-gpu', fromImage: 'nvidia/cuda:11.0.3-devel-ubuntu18.04', targetName: XGB_TARGET_GPU, nodeLabel: getGPUNodeLabel()],
       ]
     ]
   }
@@ -155,8 +165,13 @@ class BuildConfig {
   List<String> getBuildEnv() {
     return [
       'JAVA_VERSION=8',
-      "BUILD_HADOOP=false"
+      "BUILD_HADOOP=false",
+      "H2O_NEXUS_ENABLED=${h2oNexusEnabled}"
     ]
+  }
+
+  List<String> getChangedPythonTests() {
+    return changedPythonTests
   }
 
   void setJobProperties(final context) {
@@ -167,11 +182,12 @@ class BuildConfig {
     def jobProperties = [
       context.buildDiscarder(context.logRotator(artifactDaysToKeepStr: '', artifactNumToKeepStr: '', daysToKeepStr: '', numToKeepStr: '25'))
     ]
-    if (context.env.BRANCH_NAME.startsWith('PR')) {
-      jobProperties += context.parameters([
-        context.booleanParam(name: 'executeFailedOnly', defaultValue: false, description: 'If checked, execute only failed stages')
-      ])
-    }
+
+    jobProperties += context.parameters([
+      context.booleanParam(name: 'executeFailedOnly', defaultValue: false, description: 'If checked, execute only failed stages'),
+      context.booleanParam(name: 'h2oNexusEnabled', defaultValue: false, description: 'If checked, resolve dependencies through the internal Nexus mirror instead of the public repositories')
+    ])
+    
     if (customProperties != null) {
       jobProperties += customProperties
     }
@@ -188,17 +204,15 @@ class BuildConfig {
     if (buildHadoop) {
       return getHadoopBuildImage()
     }
-    return "${DOCKER_REGISTRY}/opsh2oai/h2o-3/${DEFAULT_IMAGE_NAME}:${DEFAULT_IMAGE_VERSION_TAG}"
+    return "${DOCKER_REGISTRY}/h2o-3/${DEFAULT_IMAGE_NAME}:${DEFAULT_IMAGE_VERSION_TAG}"
   }
 
   String getHadoopBuildImage() {
-    return "${DOCKER_REGISTRY}/opsh2oai/h2o-3/${DEFAULT_HADOOP_IMAGE_NAME}:${DEFAULT_IMAGE_VERSION_TAG}"
+    return "${DOCKER_REGISTRY}/h2o-3/${DEFAULT_HADOOP_IMAGE_NAME}:${DEFAULT_IMAGE_VERSION_TAG}"
   }
 
   String getReleaseImage() {
-    // FIXME: Version 40 has an issue with Sphinx, temporarily downgrade to 39 for release only 
-    def versionTag = DEFAULT_IMAGE_VERSION_TAG == 40 ? 39 : DEFAULT_IMAGE_VERSION_TAG;
-    return "${DOCKER_REGISTRY}/opsh2oai/h2o-3/${DEFAULT_RELEASE_IMAGE_NAME}:${versionTag}"
+    return "${DOCKER_REGISTRY}/h2o-3/${DEFAULT_RELEASE_IMAGE_NAME}:${DEFAULT_IMAGE_VERSION_TAG}"
   }
 
   String getHadoopImageVersion() {
@@ -213,11 +227,17 @@ class BuildConfig {
     return supportedXGBEnvironments
   }
 
-  String getXGBImageForEnvironment(final String osName, final xgbEnv) {
-    return "harbor.h2o.ai/opsh2oai/h2o-3-xgb-runtime-${xgbEnv.targetName}:${osName}"
+  String getXGBImageForEnvironment(final String osName, final xgbEnv, final String buildTag) {
+    def suffix = ""
+    if (buildTag) {
+      suffix = '-b' + buildTag.trim()
+    }
+    return "harbor.h2o.ai/opsh2oai/h2o-3-xgb-runtime-${xgbEnv.targetName}:${osName}${suffix}"
   }
 
   String getStageImage(final stageConfig) {
+    if (stageConfig.imageSpecifier && stageConfig.imageVersion)
+      return getDevImageReference(stageConfig.imageSpecifier, stageConfig.imageVersion)
     if (stageConfig.imageSpecifier)
       return getDevImageReference(stageConfig.imageSpecifier)
     def component = stageConfig.component
@@ -253,13 +273,19 @@ class BuildConfig {
       default:
         throw new IllegalArgumentException("Cannot find image for component ${component}")
     }
-
-    return "${DOCKER_REGISTRY}/opsh2oai/h2o-3/dev-${imageComponentName}-${version}:${DEFAULT_IMAGE_VERSION_TAG}"
+    def imageVersion = DEFAULT_IMAGE_VERSION_TAG
+    if (stageConfig.imageVersion)
+      imageVersion = stageConfig.imageVersion
+    return "${DOCKER_REGISTRY}/h2o-3/dev-${imageComponentName}-${version}:${imageVersion}"
   }
   
-  String getDevImageReference(final specifier) {
-    return "${DOCKER_REGISTRY}/opsh2oai/h2o-3/dev-${specifier}:${DEFAULT_IMAGE_VERSION_TAG}"
+  String getDevImageReference(final specifier, final version) {
+    return "${DOCKER_REGISTRY}/h2o-3/dev-${specifier}:${version}"
   }
+
+  String getDevImageReference(final specifier) {
+    return getDevImageReference(specifier, DEFAULT_IMAGE_VERSION_TAG)
+  }  
 
   String getStashNameForTestPackage(final String platform) {
     return String.format("%s-%s", TEST_PACKAGE_STASH_NAME_PREFIX, platform == 'any' ? 'java' : platform)
@@ -282,7 +308,7 @@ class BuildConfig {
 
     changesMap[COMPONENT_ANY] = true
 
-    for (change in changes) {
+    for (change in changes.keySet()) {
       if (change.startsWith('h2o-py/') || change == 'h2o-bindings/bin/gen_python.py') {
         changesMap[COMPONENT_PY] = true
       } else if (change.startsWith('h2o-r/') ||  change == 'h2o-bindings/bin/gen_R.py') {
@@ -292,6 +318,23 @@ class BuildConfig {
       } else {
         markAllComponentsForTest()
       }
+    }
+  }
+
+  private static List<String> detectPythonTestChanges(changes) {
+    changes.findAll { changeEntry ->
+      def changeType = changeEntry.value
+      def change = changeEntry.key
+      changeType != "D" && // was not deleted
+              change.startsWith('h2o-py/') && change.contains("pyunit_") &&
+              change.lastIndexOf("pyunit_") > change.lastIndexOf("/") && // Allow to run "pyunit_*" files inside of "pyunit_*" directory but do not allow e.g. utilsPY.py to run
+              !change.contains("pyunit_explain") && !change.endsWith("_large.py") && // takes too much time to run
+              !change.contains("_NOPASS.py") &&  // We know these test fail often and randomly, no need to run it in this stage
+              !change.contains("pyunit_h2oassembly_download_mojo") &&
+              !change.contains("test_cloud") &&
+              !change.contains("demos")
+    }.collect {
+      it.key.replaceFirst(".*pyunit_", "pyunit_") // Extract only filename from path
     }
   }
 
@@ -320,7 +363,7 @@ class BuildConfig {
     return getSmokeHadoopImageImpl(distribution, version, krbSuffix)
   }
 
-  String getHadoopEdgeNodeImage(final distribution, final version, final useKrb) {
+  String getHadoopEdgeNodeImage(final distribution, final version, final useKrb = true) {
     def suffix = "-0xd-edge"
     if (useKrb) {
       suffix = '-krb' + suffix
@@ -333,13 +376,13 @@ class BuildConfig {
   }
 
   static enum NodeLabels {
-    LABELS_C1('docker && !mr-0xc8', 'mr-0xc9', 'gpu && !2gpu', 'mr-dl3'), //master or nightly build
-    LABELS_B4('docker', 'docker', 'gpu && !2gpu', 'docker')  //PR build
+    LABELS_C1('h2o-3', 'h2o-3', 'h2o-3', 'h2o-3'), //master or nightly build - use only this one
+    LABELS_B4('h2o-3', 'h2o-3', 'h2o-3', 'h2o-3')
 
     static Map<String, NodeLabels> LABELS_MAP = [
             "c1": LABELS_C1,
             "g1": LABELS_C1, //mr-0xg1 was set as alias to mr-0xc1
-            "b4": LABELS_B4
+            "b4": LABELS_B4  // not used
     ]
 
     private final String defaultNodeLabel
@@ -368,16 +411,6 @@ class BuildConfig {
 
     String getGPUBenchmarkNodeLabel() {
       return gpuBenchmarkNodeLabel
-    }
-
-    private static NodeLabels findByBuildURL(final String buildURL) {
-      final String name = buildURL.replaceAll('http://mr-0x', '').replaceAll(':8080.*', '')
-
-      if (LABELS_MAP.containsKey(name)) {
-        return LABELS_MAP.get(name)
-      } else {
-        throw new IllegalArgumentException(String.format("Master %s (%s) is unknown", name, buildURL))
-      }
     }
   }
 }
